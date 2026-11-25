@@ -1,0 +1,28 @@
+# Environment secrets and local overrides
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies and generated frontend/backend output
+**/vendor/
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/public/build/
+**/public/hot
+
+# Local Laravel data, runtime files and uploaded assets
+/backend/database/database.sqlite
+/backend/storage/app/public/**
+/backend/storage/app/servbay-ca-bundle.pem
+/backend/storage/logs/*.log
+/backend/.phpunit.result.cache
+/backend/.phpunit.cache/
+
+# Investigated console-output artifacts; retained in the working tree
+/backend/all())
+/backend/count()])
+/backend/count()
+/backend/listTableNames())
+/backend/pluck(slug))
+/backend/toArray())
