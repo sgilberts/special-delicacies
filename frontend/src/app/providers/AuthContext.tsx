@@ -3,9 +3,17 @@ import api, { invalidateCachedGets } from "@/lib/api";
 import type { ApiResponse, AuthUser } from "@/types/api";
 import { AuthContext } from "./AuthContextState";
 
+function getSessionToken(): string | null {
+  const sessionToken = sessionStorage.getItem("special_delicacies_token");
+  const legacyToken = localStorage.getItem("special_delicacies_token");
+  if (!sessionToken && legacyToken) sessionStorage.setItem("special_delicacies_token", legacyToken);
+  if (legacyToken) localStorage.removeItem("special_delicacies_token");
+  return sessionToken || legacyToken;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem("special_delicacies_token");
+    return getSessionToken();
   });
   const [user, setUser] = useState<AuthUser | null>(() => {
     const saved = localStorage.getItem("special_delicacies_user");
@@ -22,13 +30,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = useCallback(async () => {
     try {
-      if (token) {
-        await api.post("/auth/logout");
-      }
+      await api.post("/auth/logout");
     } catch {
       // Ignore network errors on logout
     } finally {
       localStorage.removeItem("special_delicacies_token");
+      sessionStorage.removeItem("special_delicacies_token");
       localStorage.removeItem("special_delicacies_user");
       invalidateCachedGets();
       setToken(null);
@@ -37,12 +44,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [token]);
 
   const refreshUser = useCallback(async () => {
-    const currentToken = localStorage.getItem("special_delicacies_token");
-    if (!currentToken) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
+    getSessionToken();
 
     try {
       const resp = await api.get<ApiResponse<AuthUser>>("/auth/me");
@@ -69,7 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const refreshVisibleSession = () => {
-      if (document.visibilityState === "visible" && localStorage.getItem("special_delicacies_token")) {
+        if (document.visibilityState === "visible") {
         void refreshUser();
       }
     };
@@ -78,9 +80,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => document.removeEventListener("visibilitychange", refreshVisibleSession);
   }, [refreshUser]);
 
-  const login = (newToken: string, newUser: AuthUser) => {
+  const login = (newToken: string | null, newUser: AuthUser) => {
     invalidateCachedGets();
-    localStorage.setItem("special_delicacies_token", newToken);
+    if (newToken) sessionStorage.setItem("special_delicacies_token", newToken);
+    else sessionStorage.removeItem("special_delicacies_token");
     localStorage.setItem("special_delicacies_user", JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);

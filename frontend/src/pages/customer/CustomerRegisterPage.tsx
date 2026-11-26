@@ -16,7 +16,7 @@ export default function CustomerRegisterPage() {
     try {
       const response = await customerApi.post<AuthResponse>("/customers/register", form);
       if (!response.data.data?.token) throw new Error(response.data.message || "Registration failed.");
-      localStorage.setItem("special_delicacies_customer_token", response.data.data.token);
+      sessionStorage.setItem("special_delicacies_customer_token", response.data.data.token);
       navigate("/account", { replace: true });
     } catch (cause) {
       const fallback = "Please check your details and try again.";

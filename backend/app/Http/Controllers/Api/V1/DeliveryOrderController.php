@@ -170,8 +170,11 @@ class DeliveryOrderController extends Controller
 
             // If cash collection was explicitly confirmed during delivery transition, record it
             if (! empty($validated['cash_collected'])) {
-                $wasPending = $updated->payment_status !== Order::PAYMENT_STATUS_PAID;
-                $updated = $this->orderService->confirmPayment($updated, $user, $validated['note'] ?? null);
+                $wasPending = $updated->payment_status !== Order::PAYMENT_STATUS_PAID
+                    || $updated->delivery_fee_payment_status === Order::DELIVERY_FEE_PENDING;
+                $updated = $updated->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                    ? $this->orderService->confirmDeliveryFeeCash($updated, $user)
+                    : $this->orderService->confirmPayment($updated, $user, $validated['note'] ?? null);
                 if ($wasPending) $this->auditCashConfirmation($updated, $user, $request);
             }
 
@@ -211,12 +214,11 @@ class DeliveryOrderController extends Controller
         }
 
         try {
-            $wasPending = $order->payment_status !== Order::PAYMENT_STATUS_PAID;
-            $updated = $this->orderService->confirmPayment(
-                $order,
-                $user,
-                $request->input('note')
-            );
+            $wasPending = $order->payment_status !== Order::PAYMENT_STATUS_PAID
+                || $order->delivery_fee_payment_status === Order::DELIVERY_FEE_PENDING;
+            $updated = $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                ? $this->orderService->confirmDeliveryFeeCash($order, $user)
+                : $this->orderService->confirmPayment($order, $user, $request->input('note'));
             if ($wasPending) $this->auditCashConfirmation($updated, $user, $request);
 
             return response()->json([
@@ -236,10 +238,16 @@ class DeliveryOrderController extends Controller
         $this->auditService->log(
             $user,
             'financial.cash_payment_confirmed',
-            "Cash payment collected for order {$order->order_number}.",
+            $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                ? "Cash delivery fee collected for order {$order->order_number}."
+                : "Cash payment collected for order {$order->order_number}.",
             $order,
-            ['payment_status' => Order::PAYMENT_STATUS_PENDING],
-            ['payment_status' => Order::PAYMENT_STATUS_PAID, 'amount' => (string) $order->total, 'currency' => 'GHS'],
+            $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                ? ['delivery_fee_payment_status' => Order::DELIVERY_FEE_PENDING]
+                : ['payment_status' => Order::PAYMENT_STATUS_PENDING],
+            $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                ? ['delivery_fee_payment_status' => Order::DELIVERY_FEE_PAID, 'amount' => (string) $order->delivery_fee, 'currency' => 'GHS']
+                : ['payment_status' => Order::PAYMENT_STATUS_PAID, 'amount' => (string) $order->total, 'currency' => 'GHS'],
             $request
         );
     }

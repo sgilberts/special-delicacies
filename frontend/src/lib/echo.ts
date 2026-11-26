@@ -6,7 +6,7 @@ import Pusher from 'pusher-js';
 
 function getToken(): string {
   try {
-    return localStorage.getItem('special_delicacies_token') ?? '';
+    return sessionStorage.getItem('special_delicacies_token') ?? '';
   } catch {
     return '';
   }

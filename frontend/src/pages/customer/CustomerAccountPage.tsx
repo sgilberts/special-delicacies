@@ -32,7 +32,7 @@ export default function CustomerAccountPage() {
 
   async function logout() {
     try { await customerApi.post("/customer/logout"); } catch { /* The local session still needs clearing. */ }
-    localStorage.removeItem("special_delicacies_customer_token");
+    sessionStorage.removeItem("special_delicacies_customer_token");
     navigate("/account/login", { replace: true });
   }
 

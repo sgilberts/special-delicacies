@@ -11,6 +11,8 @@ import {
   Save,
   Image as ImageIcon,
   Sparkles,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import api, { cachedGet } from "@/lib/api";
 import { assetUrl } from "@/lib/assetUrl";
@@ -45,7 +47,17 @@ export default function AdminContentPage() {
     try {
       const res = await cachedGet<ApiResponse<WebsiteContentData>>("/admin/content", 15_000);
       if (res.data.success && res.data.data) {
-        setContent(res.data.data);
+        setContent({
+          ...res.data.data,
+          gallery_items: res.data.data.gallery_items.map((item, index) => ({
+            ...item,
+            display_order: item.display_order ?? index,
+            is_published: item.is_published ?? true,
+            show_in_hero: item.show_in_hero ?? false,
+            hero_active: item.hero_active ?? true,
+            hero_sort_order: item.hero_sort_order ?? index,
+          })),
+        });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load website content.";
@@ -70,6 +82,7 @@ export default function AdminContentPage() {
       if (res.data.success) {
         setSuccessMessage("Website content updated and audited successfully.");
         setContent(res.data.data);
+        window.dispatchEvent(new Event("restaurant-content-updated"));
       }
     } catch (err: any) {
       setError(err.response?.data?.message || "Failed to update website content.");
@@ -117,6 +130,13 @@ export default function AdminContentPage() {
       description: "Description of signature preparation.",
       tint: "rgba(189, 112, 72, 0.15)",
       image_url: null,
+      display_order: content.gallery_items.length,
+      is_published: true,
+      show_in_hero: false,
+      hero_active: true,
+      hero_sort_order: content.gallery_items.length,
+      hero_cta_text: null,
+      hero_cta_url: null,
     };
     setContent({ ...content, gallery_items: [...content.gallery_items, newItem] });
   };
@@ -124,6 +144,20 @@ export default function AdminContentPage() {
   const handleRemoveGalleryItem = (index: number) => {
     const updated = content.gallery_items.filter((_, i) => i !== index);
     setContent({ ...content, gallery_items: updated });
+  };
+
+  const updateGalleryItem = (index: number, changes: Partial<WebsiteGalleryItem>) => {
+    const updated = [...content.gallery_items];
+    updated[index] = { ...updated[index], ...changes };
+    setContent({ ...content, gallery_items: updated });
+  };
+
+  const moveGalleryItem = (index: number, direction: -1 | 1) => {
+    const destination = index + direction;
+    if (destination < 0 || destination >= content.gallery_items.length) return;
+    const updated = [...content.gallery_items];
+    [updated[index], updated[destination]] = [updated[destination], updated[index]];
+    setContent({ ...content, gallery_items: updated.map((item, position) => ({ ...item, display_order: position })) });
   };
 
   return (
@@ -277,6 +311,10 @@ export default function AdminContentPage() {
                   className="p-4 rounded-xl bg-[var(--color-background)] border border-[var(--color-border)] space-y-3"
                 >
                   <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      <button type="button" disabled={idx === 0} onClick={() => moveGalleryItem(idx, -1)} aria-label={`Move ${item.title} earlier`} className="rounded p-1 text-[var(--color-text-secondary)] disabled:opacity-30"><ChevronUp size={16} /></button>
+                      <button type="button" disabled={idx === content.gallery_items.length - 1} onClick={() => moveGalleryItem(idx, 1)} aria-label={`Move ${item.title} later`} className="rounded p-1 text-[var(--color-text-secondary)] disabled:opacity-30"><ChevronDown size={16} /></button>
+                    </div>
                     <select
                       value={item.category}
                       onChange={(e) => {
@@ -331,6 +369,32 @@ export default function AdminContentPage() {
                       }}
                       className="w-full px-3 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs text-[var(--color-text)]"
                     />
+                  </div>
+
+                  <div className="grid gap-2 border-t border-[var(--color-border)] pt-3 sm:grid-cols-2">
+                    <label className="flex items-start gap-2 text-xs font-semibold text-[var(--color-text)]">
+                      <input type="checkbox" checked={item.is_published ?? true} onChange={(e) => updateGalleryItem(idx, { is_published: e.target.checked })} />
+                      Published in Moments &amp; Flavours
+                    </label>
+                    <label className="flex items-start gap-2 text-xs font-semibold text-[var(--color-text)]">
+                      <input type="checkbox" checked={item.show_in_hero ?? false} onChange={(e) => updateGalleryItem(idx, { show_in_hero: e.target.checked })} />
+                      Select for homepage hero
+                    </label>
+                    {item.show_in_hero && <>
+                      <label className="flex items-start gap-2 text-xs font-semibold text-[var(--color-text)]">
+                        <input type="checkbox" checked={item.hero_active ?? true} onChange={(e) => updateGalleryItem(idx, { hero_active: e.target.checked })} />
+                        Hero slide active
+                      </label>
+                      <label className="text-xs font-semibold text-[var(--color-text-secondary)]">Hero order
+                        <input type="number" min={0} value={item.hero_sort_order ?? idx} onChange={(e) => updateGalleryItem(idx, { hero_sort_order: Number(e.target.value) || 0 })} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--color-text)]" />
+                      </label>
+                      <label className="text-xs font-semibold text-[var(--color-text-secondary)]">Optional button label
+                        <input type="text" maxLength={60} value={item.hero_cta_text ?? ""} onChange={(e) => updateGalleryItem(idx, { hero_cta_text: e.target.value || null })} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--color-text)]" />
+                      </label>
+                      <label className="text-xs font-semibold text-[var(--color-text-secondary)]">Optional button path (same website)
+                        <input type="text" maxLength={255} placeholder="/menu" value={item.hero_cta_url ?? ""} onChange={(e) => updateGalleryItem(idx, { hero_cta_url: e.target.value || null })} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--color-text)]" />
+                      </label>
+                    </>}
                   </div>
 
                   <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)]/60">

@@ -111,7 +111,7 @@ class CustomerCreditService
 
             $available = $this->allocations->availableMinorForPayment($payment->id);
             if ($minor > $available) throw new DomainException('Credit designation exceeds the receipt’s unallocated balance.');
-            $creditBefore = $this->creditBalanceMinor($payer, $payment->currency);
+            $creditBefore = $this->creditBalanceMinor($payer, $payment->currency, true);
             return CustomerCreditLedgerEntry::query()->create($this->entryData(
                 CustomerCreditLedgerEntry::TYPE_DESIGNATION, $operationReference, $payer, $payment->currency,
                 $minor, $reason, $actor, $creditBefore, $creditBefore + $minor,
@@ -139,7 +139,7 @@ class CustomerCreditService
                 return $existing;
             }
 
-            $creditBefore = $this->creditBalanceMinor($payer, $document->currency);
+            $creditBefore = $this->creditBalanceMinor($payer, $document->currency, true);
             $outstanding = $this->allocations->invoiceOutstandingMinor($document);
             if ($minor > $creditBefore) throw new DomainException('Credit application exceeds the available credit balance.');
             if ($minor > $outstanding) throw new DomainException('Credit application exceeds the invoice outstanding balance.');
@@ -282,10 +282,24 @@ class CustomerCreditService
         if (! DB::table($table)->where('id', $payer->id)->lockForUpdate()->first()) throw new DomainException('Credit payer no longer exists.');
     }
 
-    private function creditBalanceMinor(Customer|Organisation $payer, string $currency): int
+    private function creditBalanceMinor(Customer|Organisation $payer, string $currency, bool $forUpdate = false): int
     {
         $query = CustomerCreditLedgerEntry::query()->where('currency', $currency);
         $payer instanceof Customer ? $query->where('customer_id', $payer->id)->whereNull('organisation_id') : $query->where('organisation_id', $payer->id)->whereNull('customer_id');
+        if ($forUpdate) {
+            // InnoDB REPEATABLE READ may otherwise reuse a snapshot established before
+            // the payer lock was acquired. A locking read observes the latest committed
+            // ledger entries after another operation releases that payer lock.
+            $credits = 0;
+            $applications = 0;
+            foreach ($query->orderBy('id')->lockForUpdate()->get(['entry_type', 'amount']) as $entry) {
+                $minor = PaymentAllocationService::toMinorUnits((string) $entry->amount);
+                $entry->entry_type === CustomerCreditLedgerEntry::TYPE_DESIGNATION
+                    ? $credits += $minor
+                    : $applications += $minor;
+            }
+            return $credits - $applications;
+        }
         $credits = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_DESIGNATION)->sum('amount');
         $applications = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_APPLICATION)->sum('amount');
         return PaymentAllocationService::toMinorUnits((string) ($credits ?: '0')) - PaymentAllocationService::toMinorUnits((string) ($applications ?: '0'));

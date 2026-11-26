@@ -71,7 +71,29 @@ class AdminWebsiteContentController extends Controller
             'gallery_items.*.description' => ['required', 'string', 'max:500'],
             'gallery_items.*.image_url'   => ['nullable', 'string', 'max:500'],
             'gallery_items.*.tint'        => ['nullable', 'string', 'max:50'],
+            'gallery_items.*.display_order' => ['sometimes', 'integer', 'min:0'],
+            'gallery_items.*.is_published' => ['sometimes', 'boolean'],
+            'gallery_items.*.show_in_hero' => ['sometimes', 'boolean'],
+            'gallery_items.*.hero_active' => ['sometimes', 'boolean'],
+            'gallery_items.*.hero_sort_order' => ['sometimes', 'integer', 'min:0'],
+            'gallery_items.*.hero_cta_text' => ['nullable', 'string', 'max:60'],
+            'gallery_items.*.hero_cta_url' => ['nullable', 'string', 'max:255', function (string $attribute, mixed $value, \Closure $fail): void {
+                if ($value !== null && (! is_string($value) || ! str_starts_with($value, '/') || str_starts_with($value, '//'))) {
+                    $fail('Hero button destination must be a path on this website.');
+                }
+            }],
         ]);
+
+        if (isset($validated['gallery_items'])) {
+            $validated['gallery_items'] = array_values(array_map(function (array $item, int $index): array {
+                $item['display_order'] = $index;
+                $item['is_published'] = filter_var($item['is_published'] ?? true, FILTER_VALIDATE_BOOLEAN);
+                $item['show_in_hero'] = filter_var($item['show_in_hero'] ?? false, FILTER_VALIDATE_BOOLEAN);
+                $item['hero_active'] = filter_var($item['hero_active'] ?? true, FILTER_VALIDATE_BOOLEAN);
+                $item['hero_sort_order'] = (int) ($item['hero_sort_order'] ?? $index);
+                return $item;
+            }, $validated['gallery_items'], array_keys($validated['gallery_items'])));
+        }
 
         $oldContent = RestaurantSetting::where('group', 'content')->pluck('value', 'key')->all();
 

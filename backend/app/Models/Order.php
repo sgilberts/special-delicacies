@@ -26,6 +26,11 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
     'subtotal',
     'delivery_fee',
     'total',
+    'grand_total',
+    'delivery_fee_payment_method',
+    'delivery_fee_payment_status',
+    'delivery_fee_confirmed_at',
+    'delivery_fee_confirmed_by',
     'payment_method',
     'payment_status',
     'payment_reference',
@@ -43,12 +48,16 @@ class Order extends Model
 
     public const TYPE_DINE_IN = 'dine_in';
     public const TYPE_DELIVERY = 'delivery';
+    public const TYPE_PICKUP = 'pickup';
 
     public const PAYMENT_METHOD_CASH = 'cash';
     public const PAYMENT_METHOD_GATEWAY = 'gateway';
 
     public const PAYMENT_STATUS_PENDING = 'pending';
     public const PAYMENT_STATUS_PAID = 'paid';
+    public const DELIVERY_FEE_PENDING = 'pending';
+    public const DELIVERY_FEE_PAID = 'paid';
+    public const DELIVERY_FEE_NOT_APPLICABLE = 'not_applicable';
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_CONFIRMED = 'confirmed';
@@ -82,6 +91,14 @@ class Order extends Model
             self::STATUS_COMPLETED => [],
             self::STATUS_CANCELLED => [],
         ],
+        self::TYPE_PICKUP => [
+            self::STATUS_PENDING => [self::STATUS_CONFIRMED, self::STATUS_CANCELLED],
+            self::STATUS_CONFIRMED => [self::STATUS_PREPARING, self::STATUS_CANCELLED],
+            self::STATUS_PREPARING => [self::STATUS_READY],
+            self::STATUS_READY => [self::STATUS_COMPLETED],
+            self::STATUS_COMPLETED => [],
+            self::STATUS_CANCELLED => [],
+        ],
     ];
 
     /**
@@ -95,6 +112,8 @@ class Order extends Model
             'subtotal'       => 'decimal:2',
             'delivery_fee'   => 'decimal:2',
             'total'          => 'decimal:2',
+            'grand_total'    => 'decimal:2',
+            'delivery_fee_confirmed_at' => 'datetime',
         ];
     }
 

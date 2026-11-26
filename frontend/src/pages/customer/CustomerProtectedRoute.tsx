@@ -5,10 +5,12 @@ import customerApi from "@/lib/customerApi";
 export default function CustomerProtectedRoute({ children }: { children: ReactNode }) {
   const [valid, setValid] = useState<boolean | null>(null);
   useEffect(() => {
-    if (!localStorage.getItem("special_delicacies_customer_token")) { setValid(false); return; }
+    const legacyToken = localStorage.getItem("special_delicacies_customer_token");
+    if (legacyToken && !sessionStorage.getItem("special_delicacies_customer_token")) sessionStorage.setItem("special_delicacies_customer_token", legacyToken);
+    localStorage.removeItem("special_delicacies_customer_token");
     let active = true;
     customerApi.get("/customer/profile").then(() => { if (active) setValid(true); }).catch(() => {
-      localStorage.removeItem("special_delicacies_customer_token");
+      sessionStorage.removeItem("special_delicacies_customer_token");
       if (active) setValid(false);
     });
     return () => { active = false; };

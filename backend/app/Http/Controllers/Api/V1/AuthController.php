@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Models\User;
 use App\Models\ChatAgentPresence;
+use App\Services\ApiTokenSession;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -49,13 +50,14 @@ class AuthController extends Controller
             ], Response::HTTP_FORBIDDEN);
         }
 
-        $token = $user->createToken('admin-token')->plainTextToken;
+        $remember = $request->boolean('remember');
+        $session = app(ApiTokenSession::class)->issue($user, 'admin-token', $remember);
 
-        return response()->json([
+        $response = response()->json([
             'success' => true,
             'message' => 'Authenticated successfully.',
             'data' => [
-                'token' => $token,
+                'token' => $remember ? null : $session['token'],
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
@@ -70,6 +72,10 @@ class AuthController extends Controller
                 ],
             ],
         ]);
+
+        return $remember
+            ? app(ApiTokenSession::class)->attachRememberCookie($response, ApiTokenSession::STAFF_COOKIE, $session['token'], $session['minutes'], $request)
+            : app(ApiTokenSession::class)->clearRememberCookie($response, ApiTokenSession::STAFF_COOKIE, $request);
     }
 
     /**
@@ -84,7 +90,7 @@ class AuthController extends Controller
         $roles = $user->roles->pluck('slug')->all();
         $permissions = $user->effectivePermissionSlugs();
 
-        return response()->json([
+        $response = response()->json([
             'success' => true,
             'data' => [
                 'id' => $user->id,
@@ -99,6 +105,8 @@ class AuthController extends Controller
                 'permissions' => $permissions,
             ],
         ]);
+
+        return $response;
     }
 
     public function updateProfile(Request $request): JsonResponse
@@ -157,9 +165,10 @@ class AuthController extends Controller
             $user->currentAccessToken()->delete();
         }
 
-        return response()->json([
+        $response = response()->json([
             'success' => true,
             'message' => 'Logged out successfully.',
         ]);
+        return app(ApiTokenSession::class)->clearRememberCookie($response, ApiTokenSession::STAFF_COOKIE, $request);
     }
 }

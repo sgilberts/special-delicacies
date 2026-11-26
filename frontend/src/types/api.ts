@@ -355,6 +355,13 @@ export interface WebsiteGalleryItem {
   description: string;
   tint?: string;
   image_url?: string | null;
+  display_order?: number;
+  is_published?: boolean;
+  show_in_hero?: boolean;
+  hero_active?: boolean;
+  hero_sort_order?: number;
+  hero_cta_text?: string | null;
+  hero_cta_url?: string | null;
 }
 
 export interface WebsiteContentData {
@@ -370,6 +377,7 @@ export interface WebsiteContentData {
 }
 
 export interface PublicContentResponse extends WebsiteContentData {
+  hero_items: WebsiteGalleryItem[];
   restaurant_name: string;
   restaurant_phone: string;
   restaurant_email: string;

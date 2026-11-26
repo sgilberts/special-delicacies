@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { ChefHat, Leaf, Star, UtensilsCrossed, ArrowRight, Image as ImageIcon } from "lucide-react";
+import { ChefHat, Leaf, Star, UtensilsCrossed, ArrowRight } from "lucide-react";
 import { cachedGet } from "@/lib/api";
 import type { ApiResponse, MenuCategory, MenuItem } from "@/types/api";
 import SectionHeading from "@/components/public/SectionHeading";
@@ -9,7 +9,7 @@ import EmptyState from "@/components/public/EmptyState";
 import ErrorState from "@/components/public/ErrorState";
 import { useRestaurantContent } from "@/hooks/useRestaurantContent";
 import { assetUrl } from "@/lib/assetUrl";
-import heroBg from "@/assets/hero.png";
+import HomepageHeroCarousel from "@/components/public/HomepageHeroCarousel";
 
 function formatPrice(price: string): string {
   const val = parseFloat(price);
@@ -98,43 +98,13 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col w-full">
-      {/* 1. HERO SECTION */}
-      <section
-        className="relative w-full flex items-center justify-center text-center px-4 overflow-hidden"
-        style={{
-          minHeight: "clamp(360px, 60vh, 85vh)",
-          backgroundImage: `linear-gradient(to bottom, rgba(48, 32, 25, 0.55) 0%, rgba(48, 32, 25, 0.78) 100%), url(${heroBg})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-        }}
-      >
-        <div className="max-w-3xl mx-auto py-16 md:py-24 flex flex-col items-center">
-          <span
-            className="text-xs md:text-sm font-bold tracking-widest uppercase mb-3 inline-block"
-            style={{ color: "var(--brand-gold)" }}
-          >
-            {content.hero_announcement || "WELCOME TO"}
-          </span>
-          <h1 className="text-3xl sm:text-4xl md:text-6xl font-extrabold text-white tracking-tight mb-4 leading-tight">
-            {content.hero_title || "Special Delicacies"}
-          </h1>
-          <p className="text-base sm:text-lg md:text-xl text-white/90 font-normal mb-8 max-w-2xl leading-relaxed">
-            {content.hero_subtitle || "Fine dining and takeaway crafted with passion, fresh ingredients, and flavours that bring people together."}
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            <Link to="/menu" className="btn-accent min-h-[44px]">
-              Explore Our Menu
-            </Link>
-            <Link
-              to="/about"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full font-semibold text-white border-2 border-white/70 hover:bg-white/10 hover:border-white transition-all min-h-[44px]"
-            >
-              About Us
-            </Link>
-          </div>
-        </div>
-      </section>
+      {/* 1. DATABASE-DRIVEN HERO CAROUSEL */}
+      <HomepageHeroCarousel
+        slides={content.hero_items ?? []}
+        title={content.hero_title || "Special Delicacies"}
+        subtitle={content.hero_subtitle || "Fine dining and takeaway crafted with passion, fresh ingredients, and flavours that bring people together."}
+        announcement={content.hero_announcement || "WELCOME TO"}
+      />
 
       {/* 2. FEATURES SECTION */}
       <section className="section-padding bg-[var(--color-background)]">
@@ -338,28 +308,21 @@ export default function HomePage() {
             subtitle="A glimpse into the Special Delicacies experience."
             centered
           />
-          <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((item) => (
-              <div
-                key={item}
-                className="pub-card aspect-square flex flex-col items-center justify-center p-4 text-center transition-transform hover:scale-[1.02]"
-                style={{ background: "var(--color-surface)" }}
-              >
-                <div
-                  className="w-12 h-12 rounded-full flex items-center justify-center mb-3"
-                  style={{ background: "var(--color-surface-secondary)", color: "var(--color-accent)" }}
-                >
-                  <ImageIcon size={22} />
-                </div>
-                <span className="text-xs font-semibold" style={{ color: "var(--color-text)" }}>
-                  Photo #{item} [Placeholder]
-                </span>
-                <span className="text-[11px] mt-1" style={{ color: "var(--color-text-secondary)" }}>
-                  Special Moments
-                </span>
-              </div>
-            ))}
-          </div>
+          {content.gallery_items.length > 0 ? (
+            <div className="mt-12 grid grid-cols-2 gap-4 md:grid-cols-4">
+              {content.gallery_items.slice(0, 4).map((item) => (
+                <Link key={item.id} to="/gallery" className="group relative aspect-square overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+                  <img src={assetUrl(item.image_url ?? null) ?? undefined} alt={item.title} loading="lazy" decoding="async" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105 motion-reduce:transition-none" />
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-3 pt-12 text-left text-white sm:p-4 sm:pt-16">
+                    <span className="block text-xs font-bold sm:text-sm">{item.title}</span>
+                    <span className="mt-1 line-clamp-2 block text-[10px] text-white/80 sm:text-xs">{item.description}</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-8 text-center text-sm text-[var(--color-text-secondary)]">New moments from our kitchen will appear here soon.</p>
+          )}
           <div className="mt-8 flex justify-center">
             <Link to="/gallery" className="btn-ghost min-h-[44px]">
               View Full Gallery <ArrowRight size={16} />

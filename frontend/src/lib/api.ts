@@ -2,6 +2,7 @@
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
+  withCredentials: true,
   headers: {
     Accept: "application/json",
   },
@@ -11,7 +12,7 @@ const getCache = new Map<string, { expiresAt: number; request: Promise<import("a
 
 /** Reuse fresh public reads across routes and collapse concurrent identical requests. */
 export function cachedGet<T>(url: string, ttlMs = 30_000, config?: import("axios").AxiosRequestConfig): Promise<import("axios").AxiosResponse<T>> {
-  const token = localStorage.getItem("special_delicacies_token") || "public";
+  const token = sessionStorage.getItem("special_delicacies_token") || "cookie";
   const identity = localStorage.getItem("special_delicacies_user") || "";
   const params = config?.params ? JSON.stringify(config.params, Object.keys(config.params).sort()) : "";
   const key = `${token}:${identity}:${url}:${params}`;
@@ -31,9 +32,9 @@ export function invalidateCachedGets(): void {
 }
 
 api.interceptors.request.use((config) => {
-  const staffToken = localStorage.getItem("special_delicacies_token");
+  const staffToken = sessionStorage.getItem("special_delicacies_token");
   const isOrderSubmission = config.method?.toLowerCase() === "post" && /\/orders\/?$/.test(config.url ?? "");
-  const customerToken = isOrderSubmission ? localStorage.getItem("special_delicacies_customer_token") : null;
+  const customerToken = isOrderSubmission ? sessionStorage.getItem("special_delicacies_customer_token") : null;
   const token = customerToken || staffToken;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;

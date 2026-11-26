@@ -50,7 +50,7 @@ class OrderService
     public function createOrder(array $data, ?User $creator = null): Order
     {
         $orderType = $data['order_type'] ?? null;
-        if (! in_array($orderType, [Order::TYPE_DINE_IN, Order::TYPE_DELIVERY], true)) {
+        if (! in_array($orderType, [Order::TYPE_DINE_IN, Order::TYPE_DELIVERY, Order::TYPE_PICKUP], true)) {
             throw new InvalidArgumentException("Invalid order type: {$orderType}");
         }
 
@@ -83,6 +83,7 @@ class OrderService
         // Validate delivery zone & address for delivery
         $zoneId = null;
         $deliveryFee = '0.00';
+        $deliveryFeeMethod = null;
         if ($orderType === Order::TYPE_DELIVERY) {
             $zoneId = $data['delivery_zone_id'] ?? null;
             if (! $zoneId) {
@@ -96,6 +97,13 @@ class OrderService
                 throw new InvalidArgumentException('Delivery orders require a delivery address.');
             }
             $deliveryFee = number_format((float) $zone->delivery_fee, 2, '.', '');
+            if (($data['payment_method'] ?? null) !== Order::PAYMENT_METHOD_GATEWAY) {
+                throw new DomainException('Home delivery requires online payment for the food order.');
+            }
+            $deliveryFeeMethod = $data['delivery_fee_payment_method'] ?? ((filter_var($data['include_delivery_fee'] ?? true, FILTER_VALIDATE_BOOLEAN)) ? 'online' : 'cash_on_delivery');
+            if (! in_array($deliveryFeeMethod, ['online', 'cash_on_delivery'], true)) {
+                throw new InvalidArgumentException('Choose online payment or cash on delivery for the delivery fee.');
+            }
         }
 
         // 1. Resolve explicit idempotency key
@@ -204,9 +212,11 @@ class OrderService
             }
 
             $formattedSubtotal = number_format($subtotal, 2, '.', '');
-            $includeDeliveryFee = $orderType !== Order::TYPE_DELIVERY
-                || filter_var($data['include_delivery_fee'] ?? true, FILTER_VALIDATE_BOOLEAN);
+            $includeDeliveryFee = $orderType === Order::TYPE_DELIVERY
+                ? $deliveryFeeMethod === 'online'
+                : false;
             $total = number_format($subtotal + ($includeDeliveryFee ? (float) $deliveryFee : 0), 2, '.', '');
+            $grandTotal = number_format($subtotal + ($orderType === Order::TYPE_DELIVERY ? (float) $deliveryFee : 0), 2, '.', '');
 
             $createdOrder = DB::transaction(function () use (
                 $data,
@@ -217,6 +227,8 @@ class OrderService
                 $formattedSubtotal,
                 $deliveryFee,
                 $total,
+                $grandTotal,
+                $deliveryFeeMethod,
                 $processedItems,
                 $creator
             ) {
@@ -236,6 +248,11 @@ class OrderService
                     'subtotal'           => $formattedSubtotal,
                     'delivery_fee'       => $deliveryFee,
                     'total'              => $total,
+                    'grand_total'        => $grandTotal,
+                    'delivery_fee_payment_method' => $deliveryFeeMethod,
+                    'delivery_fee_payment_status' => $orderType !== Order::TYPE_DELIVERY
+                        ? Order::DELIVERY_FEE_NOT_APPLICABLE
+                        : Order::DELIVERY_FEE_PENDING,
                     'payment_method'     => ($data['payment_method'] ?? Order::PAYMENT_METHOD_CASH) === Order::PAYMENT_METHOD_GATEWAY
                         ? Order::PAYMENT_METHOD_GATEWAY
                         : Order::PAYMENT_METHOD_CASH,
@@ -338,6 +355,10 @@ class OrderService
                     throw new DomainException(
                         "Cannot complete delivery order #{$lockedOrder->order_number} before cash payment collection is confirmed."
                     );
+                }
+                if ($lockedOrder->delivery_fee_payment_method === 'cash_on_delivery'
+                    && $lockedOrder->delivery_fee_payment_status !== Order::DELIVERY_FEE_PAID) {
+                    throw new DomainException('Cannot complete this delivery until the cash delivery fee is confirmed received.');
                 }
             }
 
@@ -523,5 +544,25 @@ class OrderService
         app(PaymentTransactionService::class)->confirmCash($updated, $user);
 
         return $updated->fresh(['items', 'statusHistories', 'table', 'deliveryZone', 'waiter', 'kitchenStaff', 'deliveryStaff']);
+    }
+
+    public function confirmDeliveryFeeCash(Order $order, User $user): Order
+    {
+        if (! $user->is_active) {
+            throw new \Illuminate\Auth\Access\AuthorizationException('Inactive users cannot confirm payment collection.');
+        }
+        $canConfirm = $user->hasRole('super-admin')
+            || $user->hasPermission('delivery.orders.deliver')
+            || $user->hasPermission('orders.complete')
+            || $user->hasPermission('financials.payments.confirm_cash');
+        if (! $canConfirm) {
+            throw new \Illuminate\Auth\Access\AuthorizationException('You do not have permission to confirm cash payment collection.');
+        }
+        if (! $user->hasRole('super-admin') && $order->delivery_staff_id && $order->delivery_staff_id !== $user->id) {
+            throw new \Illuminate\Auth\Access\AuthorizationException('You can only confirm payment for orders assigned to you.');
+        }
+
+        app(PaymentTransactionService::class)->confirmDeliveryFeeCash($order, $user);
+        return $order->fresh(['items', 'statusHistories', 'table', 'deliveryZone', 'deliveryStaff']);
     }
 }

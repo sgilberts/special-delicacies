@@ -155,15 +155,23 @@ class AdminOrderController extends Controller
             $currentUser = $request->user();
             $note = $request->input('note', 'Cash payment confirmed by Super Admin.');
 
-            $updated = $this->orderService->confirmPayment($order, $currentUser, $note);
+            $updated = $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                ? $this->orderService->confirmDeliveryFeeCash($order, $currentUser)
+                : $this->orderService->confirmPayment($order, $currentUser, $note);
 
             $this->auditService->log(
                 $currentUser,
                 'order.confirm_payment',
-                "Admin confirmed cash payment for order {$order->order_number} (GH₵ {$order->total}).",
+                $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                    ? "Admin confirmed cash delivery-fee receipt for order {$order->order_number} (GH₵ {$order->delivery_fee})."
+                    : "Admin confirmed cash payment for order {$order->order_number} (GH₵ {$order->total}).",
                 $order,
-                ['payment_status' => Order::PAYMENT_STATUS_PENDING],
-                ['payment_status' => Order::PAYMENT_STATUS_PAID],
+                $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                    ? ['delivery_fee_payment_status' => Order::DELIVERY_FEE_PENDING]
+                    : ['payment_status' => Order::PAYMENT_STATUS_PENDING],
+                $order->payment_method === Order::PAYMENT_METHOD_GATEWAY
+                    ? ['delivery_fee_payment_status' => Order::DELIVERY_FEE_PAID, 'delivery_fee' => (string) $order->delivery_fee]
+                    : ['payment_status' => Order::PAYMENT_STATUS_PAID],
                 $request
             );
 

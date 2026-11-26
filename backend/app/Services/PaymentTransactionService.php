@@ -71,6 +71,12 @@ class PaymentTransactionService
                 $order->forceFill(['payment_status' => Order::PAYMENT_STATUS_PAID])->save();
                 $changed = true;
             }
+            if ($order->order_type === Order::TYPE_DELIVERY
+                && $order->delivery_fee_payment_method === 'online'
+                && $order->delivery_fee_payment_status !== Order::DELIVERY_FEE_PAID) {
+                $order->forceFill(['delivery_fee_payment_status' => Order::DELIVERY_FEE_PAID])->save();
+                $changed = true;
+            }
             return [$transaction->fresh(), $changed];
         });
 
@@ -163,6 +169,51 @@ class PaymentTransactionService
                 'confirmed_by' => $user->id,
             ])->save();
             $lockedOrder->forceFill(['payment_status' => Order::PAYMENT_STATUS_PAID])->save();
+            return $transaction->fresh();
+        });
+
+        event(new FinancialPaymentUpdated($transaction));
+        event(new OrderTrackingUpdated($transaction->order()->firstOrFail()));
+        return $transaction;
+    }
+
+    public function confirmDeliveryFeeCash(Order $order, User $user): PaymentTransaction
+    {
+        $transaction = DB::transaction(function () use ($order, $user) {
+            $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
+            if ($lockedOrder->order_type !== Order::TYPE_DELIVERY
+                || $lockedOrder->delivery_fee_payment_method !== 'cash_on_delivery'
+                || $lockedOrder->payment_status !== Order::PAYMENT_STATUS_PAID
+                || $lockedOrder->status !== Order::STATUS_DELIVERED) {
+                throw new \DomainException('The food must be paid online and the delivery must be marked delivered before confirming its cash delivery fee.');
+            }
+
+            $reference = 'DELIVERY-FEE-CASH-'.$lockedOrder->order_number;
+            $transaction = PaymentTransaction::query()->where('transaction_reference', $reference)->lockForUpdate()->first();
+            if ($transaction?->status === 'succeeded') return $transaction;
+
+            $transaction ??= PaymentTransaction::create([
+                'order_id' => $lockedOrder->id,
+                'transaction_reference' => $reference,
+                'payment_method' => 'cash',
+                'amount' => $lockedOrder->delivery_fee,
+                'currency' => 'GHS',
+                'status' => 'pending',
+                'reporting_date' => now()->toDateString(),
+            ]);
+            $transaction->forceFill([
+                'status' => 'succeeded',
+                'verified_at' => now(),
+                'received_at' => now(),
+                'reporting_date' => now()->toDateString(),
+                'confirmed_by' => $user->id,
+            ])->save();
+            $lockedOrder->forceFill([
+                'delivery_fee_payment_status' => Order::DELIVERY_FEE_PAID,
+                'delivery_fee_confirmed_at' => now(),
+                'delivery_fee_confirmed_by' => $user->id,
+            ])->save();
+
             return $transaction->fresh();
         });
 

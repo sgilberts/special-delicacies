@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use App\Services\ApiTokenSession;
 use Symfony\Component\HttpFoundation\Response;
 
 class CustomerController extends Controller
@@ -39,7 +40,7 @@ class CustomerController extends Controller
                 ]);
 
                 $this->audit($request, $customer, 'registered', ['name', 'phone', 'email']);
-                return [$customer, $customer->createToken('customer-session')->plainTextToken];
+                return [$customer, app(ApiTokenSession::class)->issue($customer, 'customer-session', false)['token']];
             });
         } catch (QueryException) {
             return response()->json(['success' => false, 'message' => 'An account with those contact details already exists.'], 409);
@@ -56,6 +57,7 @@ class CustomerController extends Controller
         $validator = Validator::make($request->all(), [
             'phone' => ['required', 'string', 'max:30'],
             'password' => ['required', 'string'],
+            'remember' => ['sometimes', 'boolean'],
         ]);
 
         if ($validator->fails()) {
@@ -70,10 +72,15 @@ class CustomerController extends Controller
             return response()->json(['success' => false, 'message' => 'This customer account is deactivated.'], 403);
         }
 
-        return response()->json(['success' => true, 'message' => 'Authenticated successfully.', 'data' => [
-            'token' => $customer->createToken('customer-session')->plainTextToken,
+        $remember = $request->boolean('remember');
+        $session = app(ApiTokenSession::class)->issue($customer, 'customer-session', $remember);
+        $response = response()->json(['success' => true, 'message' => 'Authenticated successfully.', 'data' => [
+            'token' => $remember ? null : $session['token'],
             'customer' => $this->customerData($customer),
         ]]);
+        return $remember
+            ? app(ApiTokenSession::class)->attachRememberCookie($response, ApiTokenSession::CUSTOMER_COOKIE, $session['token'], $session['minutes'], $request)
+            : app(ApiTokenSession::class)->clearRememberCookie($response, ApiTokenSession::CUSTOMER_COOKIE, $request);
     }
 
     public function profile(Request $request): JsonResponse
@@ -160,7 +167,7 @@ class CustomerController extends Controller
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()?->delete();
-        return response()->json(['success' => true, 'message' => 'Logged out successfully.']);
+        return app(ApiTokenSession::class)->clearRememberCookie(response()->json(['success' => true, 'message' => 'Logged out successfully.']), ApiTokenSession::CUSTOMER_COOKIE, $request);
     }
 
     private function customerData(Customer $customer): array

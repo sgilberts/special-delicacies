@@ -16,6 +16,7 @@ import { assetUrl } from "@/lib/assetUrl";
 const loginSchema = z.object({
   email: z.string().min(1, "Email address is required").email("Please enter a valid email address"),
   password: z.string().min(1, "Password is required"),
+  remember: z.boolean().optional(),
 });
 
 type LoginFormValues = z.infer<typeof loginSchema>;
@@ -39,14 +40,15 @@ export default function AdminLoginPage() {
     defaultValues: {
       email: "admin@special-delicacies.local",
       password: "",
+      remember: false,
     },
   });
 
   const onSubmit = async (values: LoginFormValues) => {
     setServerError(null);
     try {
-      const resp = await api.post<ApiResponse<{ token: string; user: AuthUser }>>("/auth/login", values);
-      if (resp.data?.success && resp.data.data?.token) {
+      const resp = await api.post<ApiResponse<{ token: string | null; user: AuthUser }>>("/auth/login", values);
+      if (resp.data?.success && resp.data.data) {
         login(resp.data.data.token, resp.data.data.user);
         success(`Welcome back, ${resp.data.data.user.name}!`);
         navigate(from, { replace: true });
@@ -160,6 +162,11 @@ export default function AdminLoginPage() {
                 </p>
               )}
             </div>
+
+            <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium text-[var(--color-text)]">
+              <input type="checkbox" {...register("remember")} className="h-4 w-4 accent-[var(--color-accent)]" />
+              Remember me
+            </label>
 
             <button
               type="submit"
