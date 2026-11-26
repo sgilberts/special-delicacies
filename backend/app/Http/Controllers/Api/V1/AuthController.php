@@ -61,6 +61,8 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'phone' => $user->phone,
+                    'email_verified_at' => $user->email_verified_at,
+                    'phone_verified_at' => $user->phone_verified_at,
                     'profile_photo_url' => $user->profile_photo_path ? asset('storage/'.$user->profile_photo_path) : null,
                     'is_active' => $user->is_active,
                     'roles' => $roles,
@@ -89,6 +91,8 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'phone' => $user->phone,
+                'email_verified_at' => $user->email_verified_at,
+                'phone_verified_at' => $user->phone_verified_at,
                 'profile_photo_url' => $user->profile_photo_path ? asset('storage/'.$user->profile_photo_path) : null,
                 'is_active' => $user->is_active,
                 'roles' => $roles,
@@ -113,6 +117,12 @@ class AuthController extends Controller
             return response()->json(['success' => false, 'message' => 'The current password is incorrect.', 'errors' => ['current_password' => ['The current password is incorrect.']]], 422);
         }
 
+        if (isset($validated['email']) && mb_strtolower(trim($validated['email'])) !== mb_strtolower((string) $user->email)) {
+            $user->email_verified_at = null;
+        }
+        if (isset($validated['phone']) && trim((string) $validated['phone']) !== trim((string) $user->phone)) {
+            $user->phone_verified_at = null;
+        }
         foreach (['name', 'email', 'phone'] as $field) {
             if (array_key_exists($field, $validated)) $user->{$field} = $validated[$field];
         }
@@ -126,6 +136,7 @@ class AuthController extends Controller
         return response()->json(['success' => true, 'message' => 'Profile updated successfully.', 'data' => [
             'id' => $user->id, 'name' => $user->name, 'email' => $user->email, 'phone' => $user->phone,
             'is_active' => $user->is_active, 'profile_photo_url' => $user->profile_photo_path ? asset('storage/'.$user->profile_photo_path) : null,
+            'email_verified_at' => $user->email_verified_at, 'phone_verified_at' => $user->phone_verified_at,
             'roles' => $user->roles->pluck('slug')->all(),
             'permissions' => $user->effectivePermissionSlugs(),
         ]]);

@@ -22,6 +22,15 @@ class CustomerCreditController extends Controller
         ]]);
     }
 
+    public function invoices(Request $request): JsonResponse
+    {
+        $validated = $request->validate(['search' => ['nullable', 'string', 'max:150'], 'per_page' => ['nullable', 'integer', 'min:1', 'max:100']]);
+        $page = $this->credit->eligibleInvoices($validated);
+        return response()->json(['success' => true, 'data' => $page->items(), 'meta' => [
+            'current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'per_page' => $page->perPage(), 'total' => $page->total(),
+        ]]);
+    }
+
     public function classify(Request $request, int $paymentId): JsonResponse
     {
         $validated = $request->validate([

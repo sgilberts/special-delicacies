@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import customerApi from "@/lib/customerApi";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 type AuthResponse = { success: boolean; data?: { token: string }; message?: string; errors?: Record<string, string[]> };
 
@@ -31,9 +32,10 @@ export default function CustomerLoginPage() {
       {error && <p role="alert" className="mt-4 rounded-lg bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">{error}</p>}
       <form onSubmit={submit} className="mt-6 space-y-4">
         <label className="block text-sm font-semibold">Telephone number<input required autoComplete="tel" value={phone} onChange={e => setPhone(e.target.value)} className="mt-1 min-h-12 w-full rounded-xl border bg-[var(--color-input-background)] px-3 font-normal" style={{ borderColor: "var(--color-border)" }} /></label>
-        <label className="block text-sm font-semibold">Password<input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1 min-h-12 w-full rounded-xl border bg-[var(--color-input-background)] px-3 font-normal" style={{ borderColor: "var(--color-border)" }} /></label>
+        <label className="block text-sm font-semibold">Password<PasswordInput required autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1 min-h-12 w-full rounded-xl border bg-[var(--color-input-background)] px-3 font-normal" style={{ borderColor: "var(--color-border)" }} /></label>
         <button disabled={busy} className="min-h-12 w-full rounded-xl bg-[var(--color-accent)] px-4 font-bold text-white disabled:opacity-60">{busy ? "Signing in…" : "Sign in"}</button>
       </form>
+      <p className="mt-3 text-sm"><Link className="font-semibold text-[var(--color-accent)]" to="/account/password/forgot">Forgot password?</Link></p>
       <p className="mt-5 text-sm">New here? <Link className="font-semibold text-[var(--color-accent)]" to="/account/register">Create an account</Link></p>
     </section>
   </div>;

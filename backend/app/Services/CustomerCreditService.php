@@ -21,7 +21,6 @@ class CustomerCreditService
     {
         $query = PaymentTransaction::query()
             ->with(['customer:id,name,email,phone', 'organisation:id,name,reference', 'receiptIntent'])
-            ->whereHas('receiptIntent')
             ->where('payment_purpose', 'invoice')->whereNull('order_id')
             ->where('status', 'succeeded')->whereNotNull('verified_at')->whereNotNull('received_at')
             ->where(function (Builder $payer): void {
@@ -40,6 +39,28 @@ class CustomerCreditService
 
         return $query->paginate(max(1, min((int) ($filters['per_page'] ?? 20), 100)))
             ->through(fn (PaymentTransaction $payment) => $this->receiptData($payment));
+    }
+
+    public function eligibleInvoices(array $filters = [])
+    {
+        $query = CommercialDocument::query()->with(['customer:id,name', 'organisation:id,name'])
+            ->where('document_type', CommercialDocument::TYPE_INVOICE)
+            ->where('status', CommercialDocument::STATUS_ISSUED)->whereNotNull('issued_at')->whereNull('voided_at')->where('total', '>', 0)
+            ->whereRaw("commercial_documents.total > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE pa.commercial_document_id = commercial_documents.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.commercial_document_id = commercial_documents.id AND ce.entry_type = 'application'), 0)")
+            ->orderByDesc('issue_date')->orderByDesc('id');
+        if (filled($filters['search'] ?? null)) {
+            $term = '%'.str_replace(['%', '_'], ['\\%', '\\_'], (string) $filters['search']).'%';
+            $query->where(fn (Builder $q) => $q->where('document_number', 'like', $term)
+                ->orWhereHas('customer', fn (Builder $c) => $c->where('name', 'like', $term))
+                ->orWhereHas('organisation', fn (Builder $o) => $o->where('name', 'like', $term)));
+        }
+        return $query->paginate(max(1, min((int) ($filters['per_page'] ?? 30), 100)))
+            ->through(fn (CommercialDocument $document) => [
+                'id' => $document->id, 'document_number' => $document->document_number,
+                'payer' => $document->organisation ? ['type' => 'organisation', 'id' => $document->organisation->id, 'name' => $document->organisation->name] : ['type' => 'customer', 'id' => $document->customer?->id, 'name' => $document->customer?->name],
+                'currency' => $document->currency, 'total' => $document->total,
+                'payment_summary' => $this->allocations->balance($document),
+            ]);
     }
 
     public function classifyReceipt(int $paymentId, string $intent, string $operationReference, string $reason, User $actor): PaymentReceiptIntent
@@ -84,7 +105,7 @@ class CustomerCreditService
             $this->lockPayer($payer);
             $existing = CustomerCreditLedgerEntry::query()->where('operation_reference', $operationReference)->first();
             if ($existing) {
-                $this->assertSameOperation($existing, CustomerCreditLedgerEntry::TYPE_DESIGNATION, $payment->id, null, $payer, $minor, $reason, $actor);
+                $this->assertSameOperation($existing, CustomerCreditLedgerEntry::TYPE_DESIGNATION, $payment->id, null, $payer, $payment->currency, $minor, $reason, $actor);
                 return $existing;
             }
 
@@ -114,7 +135,7 @@ class CustomerCreditService
             $this->assertInvoicePayer($document, $payer);
             $existing = CustomerCreditLedgerEntry::query()->where('operation_reference', $operationReference)->first();
             if ($existing) {
-                $this->assertSameOperation($existing, CustomerCreditLedgerEntry::TYPE_APPLICATION, null, $document->id, $payer, $minor, $reason, $actor);
+                $this->assertSameOperation($existing, CustomerCreditLedgerEntry::TYPE_APPLICATION, null, $document->id, $payer, $document->currency, $minor, $reason, $actor);
                 return $existing;
             }
 
@@ -223,8 +244,8 @@ class CustomerCreditService
         return [
             'id' => $payment->id, 'reference' => $payment->transaction_reference,
             'payer' => $payment->organisation ? ['type' => 'organisation', 'id' => $payment->organisation->id, 'name' => $payment->organisation->name] : ['type' => 'customer', 'id' => $payment->customer->id, 'name' => $payment->customer->name],
-            'amount' => $payment->amount, 'currency' => $payment->currency, 'intent' => $payment->receiptIntent->intent,
-            'reason' => $payment->receiptIntent->reason, 'verified_at' => $payment->verified_at, 'received_at' => $payment->received_at,
+            'amount' => $payment->amount, 'currency' => $payment->currency, 'intent' => $payment->receiptIntent?->intent,
+            'reason' => $payment->receiptIntent?->reason, 'verified_at' => $payment->verified_at, 'received_at' => $payment->received_at,
             'unallocated_amount' => PaymentAllocationService::formatMinorUnits($this->allocations->availableMinorForPayment($payment->id)),
         ];
     }
@@ -290,13 +311,15 @@ class CustomerCreditService
         ];
     }
 
-    private function assertSameOperation(CustomerCreditLedgerEntry $entry, string $type, ?int $paymentId, ?int $documentId, Customer|Organisation $payer, int $amount, string $reason, User $actor): void
+    private function assertSameOperation(CustomerCreditLedgerEntry $entry, string $type, ?int $paymentId, ?int $documentId, Customer|Organisation $payer, string $currency, int $amount, string $reason, User $actor): void
     {
+        $paymentMatches = $paymentId === null ? $entry->source_payment_transaction_id === null : (int) $entry->source_payment_transaction_id === $paymentId;
+        $documentMatches = $documentId === null ? $entry->commercial_document_id === null : (int) $entry->commercial_document_id === $documentId;
         $payerMatches = $payer instanceof Customer
             ? (int) $entry->customer_id === (int) $payer->id && $entry->organisation_id === null
             : (int) $entry->organisation_id === (int) $payer->id && $entry->customer_id === null;
-        if ($entry->entry_type !== $type || $entry->source_payment_transaction_id !== $paymentId || $entry->commercial_document_id !== $documentId
-            || ! $payerMatches || PaymentAllocationService::toMinorUnits((string) $entry->amount) !== $amount
+        if ($entry->entry_type !== $type || ! $paymentMatches || ! $documentMatches
+            || ! $payerMatches || $entry->currency !== $currency || PaymentAllocationService::toMinorUnits((string) $entry->amount) !== $amount
             || trim($entry->reason) !== trim($reason) || (int) $entry->actor_user_id !== (int) $actor->id) {
             throw new DomainException('This operation reference was already used for a different credit operation.');
         }

@@ -12,6 +12,9 @@ return new class extends Migration
             $table->timestamp('email_verified_at')->nullable()->after('email');
             $table->timestamp('phone_verified_at')->nullable()->after('phone');
         });
+        Schema::table('users', function (Blueprint $table): void {
+            $table->timestamp('phone_verified_at')->nullable()->after('phone');
+        });
 
         Schema::create('account_security_challenges', function (Blueprint $table): void {
             $table->id();
@@ -52,6 +55,9 @@ return new class extends Migration
         Schema::dropIfExists('account_security_challenges');
         Schema::table('customers', function (Blueprint $table): void {
             $table->dropColumn(['email_verified_at', 'phone_verified_at']);
+        });
+        Schema::table('users', function (Blueprint $table): void {
+            $table->dropColumn('phone_verified_at');
         });
     }
 };

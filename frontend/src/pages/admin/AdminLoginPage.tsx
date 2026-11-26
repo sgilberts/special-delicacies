@@ -176,6 +176,7 @@ export default function AdminLoginPage() {
               )}
             </button>
           </form>
+          <p className="mt-4 text-center text-sm"><Link className="font-semibold text-[var(--color-accent)]" to="/admin/password/forgot">Forgot password?</Link></p>
         </div>
       </div>
 

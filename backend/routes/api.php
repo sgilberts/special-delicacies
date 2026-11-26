@@ -16,6 +16,8 @@ use App\Http\Controllers\Api\V1\Admin\MenuPriceController;
 use App\Http\Controllers\Api\V1\Admin\RestaurantSettingController;
 use App\Http\Controllers\Api\V1\Admin\ReverbController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\AccountVerificationController;
+use App\Http\Controllers\Api\V1\PasswordRecoveryController;
 use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\CustomerCreditController;
@@ -57,6 +59,14 @@ Route::prefix('v1')->group(function () {
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
     Route::post('/customers/register', [CustomerController::class, 'register'])->middleware('throttle:5,1');
     Route::post('/customers/login', [CustomerController::class, 'login'])->middleware('throttle:5,1');
+    Route::post('/auth/password/forgot', [PasswordRecoveryController::class, 'requestStaffEmail'])->middleware('throttle:5,1');
+    Route::post('/auth/password/phone/forgot', [PasswordRecoveryController::class, 'requestStaffPhone'])->middleware('throttle:5,1');
+    Route::post('/auth/password/reset', [PasswordRecoveryController::class, 'resetStaffEmail'])->middleware('throttle:10,1');
+    Route::post('/auth/password/phone/reset', [PasswordRecoveryController::class, 'resetStaffPhone'])->middleware('throttle:10,1');
+    Route::post('/customers/password/forgot', [PasswordRecoveryController::class, 'requestCustomerEmail'])->middleware('throttle:5,1');
+    Route::post('/customers/password/phone/forgot', [PasswordRecoveryController::class, 'requestCustomerPhone'])->middleware('throttle:5,1');
+    Route::post('/customers/password/reset', [PasswordRecoveryController::class, 'resetCustomerEmail'])->middleware('throttle:10,1');
+    Route::post('/customers/password/phone/reset', [PasswordRecoveryController::class, 'resetCustomerPhone'])->middleware('throttle:10,1');
 
     // Authenticated user endpoint (Preserved from Phase 1)
     Route::get('/user', function (Request $request) {
@@ -79,6 +89,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('/profile', [CustomerController::class, 'updateProfile']);
         Route::get('/orders', [CustomerController::class, 'orders']);
         Route::post('/logout', [CustomerController::class, 'logout']);
+        Route::post('/verification/{channel}/request', [AccountVerificationController::class, 'requestCustomer'])->middleware('throttle:5,1');
+        Route::post('/verification/{channel}/verify', [AccountVerificationController::class, 'verifyCustomer'])->middleware('throttle:10,1');
         Route::get('/quotations', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'quotation');
         Route::get('/quotations/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'quotation');
         Route::get('/quotations/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'quotation');
@@ -125,6 +137,10 @@ Route::prefix('v1')->group(function () {
 
     // Authenticated & Role/Permission Protected Endpoints
     Route::middleware(['auth:sanctum', EnsureStaffAccount::class])->group(function () {
+        Route::post('/auth/verification/email/request', [AccountVerificationController::class, 'requestStaffEmail'])->middleware('throttle:5,1');
+        Route::post('/auth/verification/email/verify', [AccountVerificationController::class, 'verifyStaffEmail'])->middleware('throttle:10,1');
+        Route::post('/auth/verification/phone/request', [AccountVerificationController::class, 'requestStaffPhone'])->middleware('throttle:5,1');
+        Route::post('/auth/verification/phone/verify', [AccountVerificationController::class, 'verifyStaffPhone'])->middleware('throttle:10,1');
         // Auth session endpoints
         Route::get('/auth/me', [AuthController::class, 'me']);
         Route::post('/auth/logout', [AuthController::class, 'logout']);
@@ -332,6 +348,7 @@ Route::prefix('v1')->group(function () {
 
         Route::prefix('admin/customer-credit')->group(function () {
             Route::get('/receipts', [AdminCustomerCreditController::class, 'receipts'])->middleware('permission:financials.deposits.view,financials.deposits.manage');
+            Route::get('/invoices', [AdminCustomerCreditController::class, 'invoices'])->middleware('permission:financials.customer_credit.view,financials.customer_credit.manage');
             Route::post('/receipts/{paymentId}/intent', [AdminCustomerCreditController::class, 'classify'])->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
             Route::get('/balances', [AdminCustomerCreditController::class, 'balances'])->middleware('permission:financials.customer_credit.view,financials.customer_credit.manage');
             Route::get('/ledger', [AdminCustomerCreditController::class, 'ledger'])->middleware('permission:financials.customer_credit.view,financials.customer_credit.manage');

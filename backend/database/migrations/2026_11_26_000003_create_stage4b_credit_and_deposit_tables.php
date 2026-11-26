@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -50,6 +51,11 @@ return new class extends Migration
             $table->index(['source_payment_transaction_id', 'entry_type'], 'credit_source_entries');
             $table->index(['commercial_document_id', 'entry_type'], 'credit_invoice_entries');
         });
+
+        if (DB::connection()->getDriverName() === 'mysql') {
+            DB::statement("ALTER TABLE customer_credit_ledger_entries ADD CONSTRAINT credit_ledger_single_payer CHECK ((customer_id IS NULL) <> (organisation_id IS NULL))");
+            DB::statement("ALTER TABLE customer_credit_ledger_entries ADD CONSTRAINT credit_ledger_entry_shape CHECK ((entry_type = 'designation' AND source_payment_transaction_id IS NOT NULL AND commercial_document_id IS NULL) OR (entry_type = 'application' AND source_payment_transaction_id IS NULL AND commercial_document_id IS NOT NULL))");
+        }
     }
 
     public function down(): void

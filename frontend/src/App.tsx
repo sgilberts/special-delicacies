@@ -54,6 +54,7 @@ const OrganisationDetailPage = lazy(() => import("@/pages/customer/OrganisationD
 const CustomerDocumentsPage = lazy(() => import("@/pages/customer/CustomerDocumentsPage"));
 const CustomerDocumentDetailPage = lazy(() => import("@/pages/customer/CustomerDocumentDetailPage"));
 const AdminCommercialDocumentsPage = lazy(() => import("@/pages/admin/AdminCommercialDocumentsPage"));
+const PasswordRecoveryPage = lazy(() => import("@/pages/account/PasswordRecoveryPage"));
 
 function App() {
   const location = useLocation();
@@ -70,6 +71,8 @@ function App() {
         <Route path="contact" element={<ContactPage />} />
         <Route path="account/login" element={<CustomerLoginPage />} />
         <Route path="account/register" element={<CustomerRegisterPage />} />
+        <Route path="account/password/forgot" element={<PasswordRecoveryPage accountType="customer" />} />
+        <Route path="account/password/reset" element={<PasswordRecoveryPage accountType="customer" />} />
         <Route path="account" element={<CustomerProtectedRoute><CustomerAccountPage /></CustomerProtectedRoute>} />
         <Route path="account/organisations" element={<CustomerProtectedRoute><OrganisationsPage /></CustomerProtectedRoute>} />
         <Route path="account/organisations/:organisationId" element={<CustomerProtectedRoute><OrganisationDetailPage /></CustomerProtectedRoute>} />
@@ -86,6 +89,8 @@ function App() {
 
       {/* Admin Authentication */}
       <Route path="/admin/login" element={<AdminLoginPage />} />
+      <Route path="/admin/password/forgot" element={<PasswordRecoveryPage accountType="staff" />} />
+      <Route path="/admin/password/reset" element={<PasswordRecoveryPage accountType="staff" />} />
 
       {/* Admin Management Shell */}
       <Route

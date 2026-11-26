@@ -96,6 +96,12 @@ class CustomerController extends Controller
         }
 
         $values = $validator->validated();
+        if (array_key_exists('email', $values) && mb_strtolower(trim((string) $values['email'])) !== mb_strtolower((string) $customer->email)) {
+            $customer->email_verified_at = null;
+        }
+        if (array_key_exists('phone', $values) && trim((string) $values['phone']) !== trim((string) $customer->phone)) {
+            $customer->phone_verified_at = null;
+        }
         foreach (['name', 'phone', 'email'] as $field) {
             if (array_key_exists($field, $values)) {
                 $customer->{$field} = $field === 'email' && $values[$field] !== null
@@ -164,6 +170,8 @@ class CustomerController extends Controller
             'name' => $customer->name,
             'email' => $customer->email,
             'phone' => $customer->phone,
+            'email_verified_at' => $customer->email_verified_at,
+            'phone_verified_at' => $customer->phone_verified_at,
             'is_active' => $customer->is_active,
             'created_at' => $customer->created_at,
             'updated_at' => $customer->updated_at,

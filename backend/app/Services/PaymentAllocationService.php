@@ -99,6 +99,8 @@ class PaymentAllocationService
                 'currency' => $document->currency,
                 'total' => $summary['invoice_total'],
                 'allocated_amount' => $summary['allocated_amount'],
+                'credit_applied_amount' => $summary['credit_applied_amount'],
+                'settled_amount' => $summary['settled_amount'],
                 'outstanding_balance' => $summary['outstanding_balance'],
                 'payment_state' => $summary['payment_state'],
                 'customer' => $document->customer?->name,
@@ -148,6 +150,7 @@ class PaymentAllocationService
         $proposed = [];
         foreach ($documents as $document) {
             $outstanding = $this->balanceMinor($document->id, (string) $document->total);
+            $summary = $this->balance($document);
             if ($normalized[$document->id] > $outstanding) throw new DomainException("The allocation exceeds invoice {$document->document_number}'s outstanding balance.");
             $proposed[] = [
                 'commercial_document_id' => $document->id,
@@ -156,7 +159,9 @@ class PaymentAllocationService
                 'organisation' => $document->organisation?->name,
                 'currency' => $document->currency,
                 'invoice_total' => self::formatMinorUnits(self::toMinorUnits((string) $document->total)),
-                'allocated_amount' => self::formatMinorUnits(self::toMinorUnits((string) $document->total) - $outstanding),
+                'allocated_amount' => $summary['allocated_amount'],
+                'credit_applied_amount' => $summary['credit_applied_amount'],
+                'settled_amount' => $summary['settled_amount'],
                 'proposed_amount' => self::formatMinorUnits($normalized[$document->id]),
                 'resulting_balance' => self::formatMinorUnits($outstanding - $normalized[$document->id]),
             ];
@@ -170,6 +175,8 @@ class PaymentAllocationService
                 'currency' => $payment->currency,
                 'original_amount' => self::formatMinorUnits(self::toMinorUnits((string) $payment->amount)),
                 'allocated_amount' => self::formatMinorUnits($allocated),
+                'payment_allocated_amount' => self::formatMinorUnits($this->paymentAllocatedMinorForPayment($payment->id)),
+                'credit_designated_amount' => self::formatMinorUnits($this->creditDesignatedMinorForPayment($payment->id)),
                 'available_amount' => self::formatMinorUnits($available),
             ],
             'invoices' => $proposed,
@@ -194,6 +201,22 @@ class PaymentAllocationService
     {
         $payment = PaymentTransaction::query()->findOrFail($paymentId);
         return max(0, self::toMinorUnits((string) $payment->amount) - $this->allocatedForPayment($paymentId));
+    }
+
+    public function paymentAllocatedMinorForPayment(int $paymentId): int
+    {
+        $amount = DB::table('payment_allocations as pa')
+            ->join('payment_allocation_operations as po', 'po.id', '=', 'pa.payment_allocation_operation_id')
+            ->leftJoin('payment_allocation_reversals as pr', 'pr.payment_allocation_id', '=', 'pa.id')
+            ->where('po.payment_transaction_id', $paymentId)->whereNull('pr.id')->sum('pa.amount');
+        return self::toMinorUnits((string) ($amount ?: '0'));
+    }
+
+    public function creditDesignatedMinorForPayment(int $paymentId): int
+    {
+        $amount = DB::table('customer_credit_ledger_entries')->where('source_payment_transaction_id', $paymentId)
+            ->where('entry_type', 'designation')->sum('amount');
+        return self::toMinorUnits((string) ($amount ?: '0'));
     }
 
     public function invoiceOutstandingMinor(CommercialDocument $document): int
@@ -381,16 +404,7 @@ class PaymentAllocationService
 
     private function allocatedForPayment(int $paymentId): int
     {
-        $amount = DB::table('payment_allocations as pa')
-            ->join('payment_allocation_operations as po', 'po.id', '=', 'pa.payment_allocation_operation_id')
-            ->leftJoin('payment_allocation_reversals as pr', 'pr.payment_allocation_id', '=', 'pa.id')
-            ->where('po.payment_transaction_id', $paymentId)
-            ->whereNull('pr.id')->sum('pa.amount');
-        $designated = DB::table('customer_credit_ledger_entries')
-            ->where('source_payment_transaction_id', $paymentId)
-            ->where('entry_type', 'designation')
-            ->sum('amount');
-        return self::toMinorUnits((string) ($amount ?: '0')) + self::toMinorUnits((string) ($designated ?: '0'));
+        return $this->paymentAllocatedMinorForPayment($paymentId) + $this->creditDesignatedMinorForPayment($paymentId);
     }
 
     private function balanceMinor(int $documentId, string $total): int
