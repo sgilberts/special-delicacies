@@ -73,6 +73,7 @@ class PaymentTransactionService
             }
             if ($order->order_type === Order::TYPE_DELIVERY
                 && $order->delivery_fee_payment_method === 'online'
+                && (int) round((float) $order->delivery_fee * 100) > 0
                 && $order->delivery_fee_payment_status !== Order::DELIVERY_FEE_PAID) {
                 $order->forceFill(['delivery_fee_payment_status' => Order::DELIVERY_FEE_PAID])->save();
                 $changed = true;

@@ -151,7 +151,7 @@ export interface PlacedOrderItem {
 export interface PlacedOrder {
   id: number;
   order_number: string;
-  order_type: "dine_in" | "delivery";
+  order_type: "dine_in" | "delivery" | "pickup";
   restaurant_table_id: number | null;
   delivery_zone_id: number | null;
   delivery_zone?: DeliveryZone | null;
@@ -163,6 +163,9 @@ export interface PlacedOrder {
   subtotal: string;
   delivery_fee: string;
   total: string;
+  grand_total?: string;
+  delivery_fee_payment_method?: string | null;
+  delivery_fee_payment_status?: string | null;
   payment_method: string;
   payment_status: string;
   payment_details?: PaymentDetails;

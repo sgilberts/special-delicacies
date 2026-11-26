@@ -204,6 +204,14 @@ export default function AdminOrdersPage() {
         default:
           return [];
       }
+    } else if (type === "pickup") {
+      switch (status) {
+        case "pending": return ["confirmed", "cancelled"];
+        case "confirmed": return ["preparing", "cancelled"];
+        case "preparing": return ["ready"];
+        case "ready": return ["completed"];
+        default: return [];
+      }
     } else {
       switch (status) {
         case "pending":
@@ -459,7 +467,7 @@ export default function AdminOrdersPage() {
                                 : "bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300"
                             }`}
                           >
-                            {ord.order_type === "dine_in" ? <Table2 size={14} /> : <Truck size={14} />}
+            {ord.order_type === "dine_in" ? <Table2 size={14} /> : ord.order_type === "pickup" ? <ShoppingBag size={14} /> : <Truck size={14} />}
                           </span>
                           <div>
                             <p className="font-semibold text-xs text-[var(--color-text)]">{ord.customer_name}</p>
@@ -660,7 +668,7 @@ export default function AdminOrdersPage() {
                     Order Type & Location
                   </span>
                   <p className="font-bold text-sm text-[var(--color-text)] capitalize">
-                    {selectedOrder.order_type === "dine_in" ? "Dine-In" : "Home Delivery"}
+                    {selectedOrder.order_type === "dine_in" ? "Dine-In" : selectedOrder.order_type === "pickup" ? "Customer Pickup" : "Home Delivery"}
                   </p>
                   {selectedOrder.table ? (
                     <p className="text-[var(--color-text)] mt-0.5">

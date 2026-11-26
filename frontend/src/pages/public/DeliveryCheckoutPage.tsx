@@ -530,7 +530,8 @@ export default function DeliveryCheckoutPage() {
 
                   {/* Totals */}
                   <div className="border-t border-stone-200 dark:border-stone-700 px-4 py-4 space-y-2 bg-stone-50 dark:bg-stone-900">
-                    {fulfillment === "delivery" && <div className="flex justify-between text-sm">
+                    {fulfillment === "delivery" && <>
+                    <div className="flex justify-between text-sm">
                       <span className="text-stone-500 dark:text-stone-400">Subtotal</span>
                       <span className="font-medium text-stone-900 dark:text-stone-100">
                         {formatCurrency(subtotal)}
@@ -547,7 +548,8 @@ export default function DeliveryCheckoutPage() {
                       >
                         {selectedZone ? formatCurrency(deliveryFee) : "Select zone"}
                       </span>
-                    </div>}
+                    </div>
+                    </>}
                     {fulfillment === "delivery" && <div className="space-y-2 rounded-lg border border-stone-200 p-3 dark:border-stone-700">
                       <p className="text-xs font-bold uppercase tracking-wide text-stone-500 dark:text-stone-400">Delivery fee payment</p>
                       <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="radio" name="delivery_fee_method" checked={deliveryFeeMethod === "online"} onChange={() => setDeliveryFeeMethod("online")} />Pay fee online with the food</label>

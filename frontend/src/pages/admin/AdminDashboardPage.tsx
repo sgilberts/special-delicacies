@@ -481,7 +481,7 @@ export default function AdminDashboardPage() {
                               </Link>
                             </td>
                             <td className="py-2.5 text-[var(--color-text-secondary)] capitalize">
-                              {ord.order_type === "dine_in" ? "Dine-in" : "Delivery"}
+                              {ord.order_type === "dine_in" ? "Dine-in" : ord.order_type === "pickup" ? "Customer pickup" : "Delivery"}
                             </td>
                             <td className="py-2.5 text-[var(--color-text)]">
                               <span className="font-semibold block">{ord.customer_name}</span>

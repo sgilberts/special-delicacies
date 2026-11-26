@@ -208,16 +208,23 @@ class ReverbController extends Controller
             $phpBinary = str_replace("'", "''", PHP_BINARY);
             $argumentList = '"' . str_replace('"', '', $artisanPath) . '" reverb:start --host=' . $this->host . ' --port=' . $this->port;
             $argumentList = str_replace("'", "''", $argumentList);
-            $cmd = "powershell -NoProfile -Command \"Start-Process -FilePath '{$phpBinary}' -ArgumentList '{$argumentList}' -WorkingDirectory '{$workingDirectory}' -WindowStyle Hidden\"";
+            $logSuffix = now()->format('Ymd-His').'-'.bin2hex(random_bytes(3));
+            $logPath = str_replace("'", "''", storage_path("logs/reverb-{$logSuffix}.log"));
+            $errorLogPath = str_replace("'", "''", storage_path("logs/reverb-error-{$logSuffix}.log"));
+            $environment = "\$env:DB_CONNECTION = 'sqlite'; \$env:DB_DATABASE = ':memory:'; \$env:DB_URL = ''; \$env:CACHE_STORE = 'array'; \$env:QUEUE_CONNECTION = 'sync'; \$env:SESSION_DRIVER = 'array'; ";
+            $startCommand = $environment
+                . "Start-Process -FilePath '{$phpBinary}' -ArgumentList '{$argumentList}' -WorkingDirectory '{$workingDirectory}' -WindowStyle Hidden -RedirectStandardOutput '{$logPath}' -RedirectStandardError '{$errorLogPath}'";
+            $cmd = "powershell -NoProfile -Command \"{$startCommand}\"";
             pclose(popen($cmd, 'r'));
         } else {
             $logPath = escapeshellarg(storage_path('logs/reverb.log'));
-            exec("cd " . escapeshellarg($basePath) . " && nohup {$command} >> {$logPath} 2>&1 < /dev/null &");
+            $runtimeEnvironment = 'DB_CONNECTION=sqlite DB_DATABASE=:memory: DB_URL= CACHE_STORE=array QUEUE_CONNECTION=sync SESSION_DRIVER=array';
+            exec("cd " . escapeshellarg($basePath) . " && {$runtimeEnvironment} nohup {$command} >> {$logPath} 2>&1 < /dev/null &");
         }
 
-        // Wait up to 3 seconds for port to open
+        // Allow slower local hosts to finish PHP and TLS startup.
         $newPid = null;
-        for ($i = 0; $i < 6; $i++) {
+        for ($i = 0; $i < 20; $i++) {
             usleep(500000); // 500ms
             $newPid = $this->getListeningPid();
             if ($newPid !== null) {
@@ -235,7 +242,7 @@ class ReverbController extends Controller
 
         return response()->json([
             'success' => false,
-            'message' => 'Reverb did not become ready. Check storage/logs/reverb.log and confirm that the host allows a persistent process on the configured port.',
+            'message' => 'Reverb did not become ready. Check the latest storage/logs/reverb*.log files and confirm that the host allows a persistent process on the configured port.',
         ], Response::HTTP_INTERNAL_SERVER_ERROR);
     }
 

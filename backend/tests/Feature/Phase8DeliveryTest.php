@@ -117,6 +117,19 @@ class Phase8DeliveryTest extends TestCase
         ], $overrides);
     }
 
+    private function configureTestGateway(): void
+    {
+        PaymentGateway::create([
+            'provider' => 'paystack', 'display_name' => 'Paystack',
+            'public_key' => 'pk_test_public', 'secret_key' => 'sk_test_secret',
+            'is_enabled' => true, 'is_default' => true,
+        ]);
+        Http::fake(['https://api.paystack.co/transaction/initialize' => Http::response([
+            'status' => true,
+            'data' => ['authorization_url' => 'https://checkout.paystack.com/test-session'],
+        ], 200)]);
+    }
+
     // ─── 1. Public Delivery Zones API ─────────────────────────────────────────
 
     public function test_public_can_list_active_delivery_zones(): void
@@ -249,13 +262,14 @@ class Phase8DeliveryTest extends TestCase
     public function test_customer_can_place_delivery_order(): void
     {
         Event::fake();
+        $this->configureTestGateway();
 
-        $response = $this->postJson('/api/v1/orders', $this->deliveryPayload());
+        $response = $this->postJson('/api/v1/orders', $this->deliveryPayload(['payment_method' => 'gateway', 'customer_email' => 'guest@example.com']));
 
         $response->assertCreated()
             ->assertJsonFragment([
                 'order_type'    => 'delivery',
-                'payment_method'=> 'cash',
+                'payment_method'=> 'gateway',
                 'payment_status'=> 'pending',
             ]);
 
@@ -268,8 +282,9 @@ class Phase8DeliveryTest extends TestCase
     public function test_server_uses_database_delivery_fee_not_client_value(): void
     {
         Event::fake();
+        $this->configureTestGateway();
 
-        $payload = $this->deliveryPayload();
+        $payload = $this->deliveryPayload(['payment_method' => 'gateway', 'customer_email' => 'guest@example.com']);
         // Client tries to manipulate delivery fee — backend ignores it
         $payload['delivery_fee'] = 0.00;
 
@@ -284,7 +299,8 @@ class Phase8DeliveryTest extends TestCase
     public function test_customer_can_exclude_delivery_fee_from_order_total(): void
     {
         Event::fake();
-        $payload = $this->deliveryPayload();
+        $this->configureTestGateway();
+        $payload = $this->deliveryPayload(['payment_method' => 'gateway', 'customer_email' => 'guest@example.com', 'delivery_fee_payment_method' => 'cash_on_delivery']);
         $payload['include_delivery_fee'] = false;
 
         $response = $this->postJson('/api/v1/orders', $payload);
@@ -294,6 +310,8 @@ class Phase8DeliveryTest extends TestCase
         $this->assertEquals('70.00', $data['subtotal']);
         $this->assertEquals('15.00', $data['delivery_fee']);
         $this->assertEquals('70.00', $data['total']);
+        $this->assertEquals('85.00', $data['grand_total']);
+        $this->assertEquals('pending', $data['delivery_fee_payment_status']);
     }
 
     public function test_gateway_order_redirects_to_server_initialized_paystack_checkout(): void
@@ -360,8 +378,9 @@ class Phase8DeliveryTest extends TestCase
     public function test_server_uses_database_item_prices_not_client_values(): void
     {
         Event::fake();
+        $this->configureTestGateway();
 
-        $payload = $this->deliveryPayload();
+        $payload = $this->deliveryPayload(['payment_method' => 'gateway', 'customer_email' => 'guest@example.com']);
         $payload['items'][0]['unit_price'] = 0.01; // client price manipulation attempt
 
         $response = $this->postJson('/api/v1/orders', $payload);
@@ -439,15 +458,16 @@ class Phase8DeliveryTest extends TestCase
         $response->assertUnprocessable();
     }
 
-    public function test_delivery_order_records_payment_method_as_cash(): void
+    public function test_delivery_order_records_online_food_payment_as_pending_until_gateway_verification(): void
     {
         Event::fake();
+        $this->configureTestGateway();
 
-        $this->postJson('/api/v1/orders', $this->deliveryPayload());
+        $this->postJson('/api/v1/orders', $this->deliveryPayload(['payment_method' => 'gateway', 'customer_email' => 'guest@example.com']));
 
         $this->assertDatabaseHas('orders', [
             'order_type'     => 'delivery',
-            'payment_method' => 'cash',
+            'payment_method' => 'gateway',
             'payment_status' => 'pending',
         ]);
     }
@@ -455,8 +475,11 @@ class Phase8DeliveryTest extends TestCase
     public function test_idempotent_delivery_order_submission(): void
     {
         Event::fake();
+        $this->configureTestGateway();
 
         $payload = $this->deliveryPayload([
+            'payment_method' => 'gateway',
+            'customer_email' => 'guest@example.com',
             'idempotency_key' => 'test-idemp-key-' . uniqid(),
         ]);
 
@@ -474,7 +497,8 @@ class Phase8DeliveryTest extends TestCase
     public function test_delivery_staff_can_list_delivery_orders(): void
     {
         Event::fake();
-        $this->postJson('/api/v1/orders', $this->deliveryPayload());
+        $this->configureTestGateway();
+        $this->postJson('/api/v1/orders', $this->deliveryPayload(['payment_method' => 'gateway', 'customer_email' => 'guest@example.com']));
 
         $response = $this->actingAs($this->deliveryStaff, 'sanctum')
             ->getJson('/api/v1/delivery/orders');
@@ -805,7 +829,8 @@ class Phase8DeliveryTest extends TestCase
     public function test_delivery_order_status_history_is_recorded(): void
     {
         Event::fake();
-        $this->postJson('/api/v1/orders', $this->deliveryPayload());
+        $this->configureTestGateway();
+        $this->postJson('/api/v1/orders', $this->deliveryPayload(['payment_method' => 'gateway', 'customer_email' => 'guest@example.com']));
 
         $order = Order::where('order_type', 'delivery')->firstOrFail();
         $this->assertDatabaseHas('order_status_histories', [
@@ -842,14 +867,12 @@ class Phase8DeliveryTest extends TestCase
             ->assertJsonFragment(['order_type' => 'dine_in']);
     }
 
-    public function test_payment_method_defaults_to_cash_for_new_orders(): void
+    public function test_home_delivery_rejects_cash_food_payment(): void
     {
         Event::fake();
-        $this->postJson('/api/v1/orders', $this->deliveryPayload());
-
-        $order = Order::where('order_type', 'delivery')->firstOrFail();
-        $this->assertEquals('cash', $order->payment_method);
-        $this->assertEquals('pending', $order->payment_status);
+        $payload = $this->deliveryPayload(['payment_method' => 'cash']);
+        $this->postJson('/api/v1/orders', $payload)->assertUnprocessable()->assertJsonValidationErrors('payment_method');
+        $this->assertDatabaseCount('orders', 0);
     }
 
     // ─── 7. Order Model Constants ─────────────────────────────────────────────

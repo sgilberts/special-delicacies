@@ -411,6 +411,8 @@ function KitchenCard({
               <span className="inline-block px-2.5 py-1 rounded-lg font-black text-xs sm:text-sm bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shadow-sm">
                 🚚 Delivery
               </span>
+            ) : order.order_type === "pickup" ? (
+              <span className="inline-block px-2.5 py-1 rounded-lg font-black text-xs sm:text-sm bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shadow-sm">Customer Pickup</span>
             ) : (
               <span className="inline-block px-3 py-1 rounded-lg font-black text-sm sm:text-base bg-[var(--brand-espresso)] text-[var(--brand-gold)] shadow-sm">
                 Table {order.table?.table_number || "—"}

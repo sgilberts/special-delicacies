@@ -15,11 +15,19 @@ location / {
 
 ## Reverb on a local server
 
-Configure the backend with `BROADCAST_CONNECTION=reverb`, matching `REVERB_APP_ID`, `REVERB_APP_KEY`, and `REVERB_APP_SECRET` values, and set `REVERB_SERVER_HOST=0.0.0.0` with an available `REVERB_SERVER_PORT` (8080 by default). Point `REVERB_HOST` and frontend `VITE_REVERB_HOST` at a hostname that resolves to this server. Set the frontend `VITE_REVERB_APP_KEY` to the same key. For an HTTPS frontend, Reverb must also use TLS or sit behind a TLS reverse proxy; configure `REVERB_SERVER_TLS_CERT` and `REVERB_SERVER_TLS_KEY` for direct TLS, then set `REVERB_SCHEME=https`, frontend `VITE_REVERB_SCHEME=https`, and matching ports. Use `VITE_REVERB_SCHEME=http` only when the page itself is served over HTTP. Rebuild the frontend and start Reverb from the Admin Reverb page or run:
+Configure the backend with `BROADCAST_CONNECTION=reverb`, matching `REVERB_APP_ID`, `REVERB_APP_KEY`, and `REVERB_APP_SECRET` values, and set `REVERB_SERVER_HOST=0.0.0.0` with an available `REVERB_SERVER_PORT` (8080 by default). Point `REVERB_HOST` and frontend `VITE_REVERB_HOST` at a hostname that resolves to this server. Set the frontend `VITE_REVERB_APP_KEY` to the same key. For an HTTPS frontend, Reverb must also use TLS or sit behind a TLS reverse proxy; configure `REVERB_SERVER_TLS_CERT` and `REVERB_SERVER_TLS_KEY` for direct TLS, then set `REVERB_SCHEME=https`, frontend `VITE_REVERB_SCHEME=https`, and matching ports. Use `VITE_REVERB_SCHEME=http` only when the page itself is served over HTTP. Rebuild the frontend and start Reverb from the Admin Reverb page or run it with process-local runtime stores:
 
-```sh
+```powershell
+$env:DB_CONNECTION = 'sqlite'
+$env:DB_DATABASE = ':memory:'
+$env:DB_URL = ''
+$env:CACHE_STORE = 'array'
+$env:QUEUE_CONNECTION = 'sync'
+$env:SESSION_DRIVER = 'array'
 php artisan reverb:start --host=0.0.0.0 --port=8080
 ```
+
+These overrides apply only to the Reverb process and keep it independent from database-backed cache, queue, and session settings used by the web application. The Admin Reverb start endpoint applies equivalent process-local overrides automatically. On Linux, prefix the same variables on the `php artisan reverb:start` command.
 
 The listener port must be reachable from staff and customer devices. The Admin Reverb controls detect and start/stop the listener on Windows and Linux. The Windows watchdog reads its host and port from `.env`. On Linux, keep it alive with a process manager such as Supervisor in production; shared hosting providers often disable shell execution or terminate background processes.
 
