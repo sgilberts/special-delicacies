@@ -28,11 +28,11 @@ return new class extends Migration
             $table->id();
             $table->string('entry_type', 24); // designation or application
             $table->string('operation_reference', 100)->unique();
-            $table->foreignId('source_payment_transaction_id')->nullable()->constrained('payment_transactions')->restrictOnDelete();
-            $table->foreignId('commercial_document_id')->nullable()->constrained('commercial_documents')->restrictOnDelete();
-            $table->foreignId('customer_id')->nullable()->constrained('customers')->restrictOnDelete();
-            $table->foreignId('organisation_id')->nullable()->constrained('organisations')->restrictOnDelete();
-            $table->foreignId('actor_user_id')->constrained('users')->restrictOnDelete();
+            $table->foreignId('source_payment_transaction_id')->nullable()->constrained('payment_transactions', 'id', 'credit_source_payment_fk')->restrictOnDelete();
+            $table->foreignId('commercial_document_id')->nullable()->constrained('commercial_documents', 'id', 'credit_commercial_doc_fk')->restrictOnDelete();
+            $table->foreignId('customer_id')->nullable()->constrained('customers', 'id', 'credit_customer_fk')->restrictOnDelete();
+            $table->foreignId('organisation_id')->nullable()->constrained('organisations', 'id', 'credit_organisation_fk')->restrictOnDelete();
+            $table->foreignId('actor_user_id')->constrained('users', 'id', 'credit_actor_user_fk')->restrictOnDelete();
             $table->unsignedBigInteger('actor_user_id_snapshot');
             $table->string('actor_name_snapshot', 255);
             $table->string('actor_reference_snapshot', 100);

@@ -54,6 +54,7 @@ const OrganisationDetailPage = lazy(() => import("@/pages/customer/OrganisationD
 const CustomerDocumentsPage = lazy(() => import("@/pages/customer/CustomerDocumentsPage"));
 const CustomerDocumentDetailPage = lazy(() => import("@/pages/customer/CustomerDocumentDetailPage"));
 const AdminCommercialDocumentsPage = lazy(() => import("@/pages/admin/AdminCommercialDocumentsPage"));
+const AdminCustomerCreditPage = lazy(() => import("@/pages/admin/AdminCustomerCreditPage"));
 const PasswordRecoveryPage = lazy(() => import("@/pages/account/PasswordRecoveryPage"));
 
 function App() {
@@ -142,6 +143,7 @@ function App() {
         <Route path="profile" element={<AdminProfilePage />} />
         <Route path="financials" element={<AdminFinancialsPage />} />
         <Route path="payment-allocations" element={<ProtectedRoute requiredPermissions={["financials.allocations.view", "financials.allocations.manage"]}><AdminPaymentAllocationsPage /></ProtectedRoute>} />
+        <Route path="customer-credit" element={<ProtectedRoute requiredPermissions={["financials.deposits.view", "financials.deposits.manage", "financials.customer_credit.view", "financials.customer_credit.manage"]}><AdminCustomerCreditPage /></ProtectedRoute>} />
         <Route path="commercial-documents" element={<ProtectedRoute requiredPermissions={["commercial_documents.view"]}><AdminCommercialDocumentsPage /></ProtectedRoute>} />
         <Route path="chat" element={<AdminChatPage />} />
         <Route path="chat/settings" element={<AdminChatSettingsPage />} />

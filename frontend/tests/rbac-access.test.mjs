@@ -54,3 +54,11 @@ test("ordinary staff still require each explicit allocation permission", () => {
   assert.equal(hasAnyPermission(["financials.allocations.view"], ["financials.allocations.manage"], roles), false);
   assert.equal(hasAnyPermission(["financials.allocations.view"], ["financials.allocations.reverse"], roles), false);
 });
+
+test("deposit and customer-credit screens require their own granular staff permissions", () => {
+  assert.equal(hasAnyPermission([], ["financials.deposits.view", "financials.deposits.manage"]), false);
+  assert.equal(hasAnyPermission(["financials.deposits.view"], ["financials.deposits.view", "financials.deposits.manage"]), true);
+  assert.equal(hasAnyPermission(["financials.deposits.view"], ["financials.customer_credit.manage"]), false);
+  assert.equal(hasAnyPermission(["financials.customer_credit.view"], ["financials.customer_credit.manage"]), false);
+  assert.equal(hasAnyPermission([], ["financials.customer_credit.manage"], ["super-admin"]), true);
+});

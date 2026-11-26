@@ -101,10 +101,12 @@ class CustomerCreditController extends Controller
 
     private function entryData($entry): array
     {
+        $payer = $entry->customer_id !== null ? $entry->customer : $entry->organisation;
         return [
             'id' => $entry->id, 'entry_type' => $entry->entry_type, 'operation_reference' => $entry->operation_reference,
             'source_payment_transaction_id' => $entry->source_payment_transaction_id, 'commercial_document_id' => $entry->commercial_document_id,
             'customer_id' => $entry->customer_id, 'organisation_id' => $entry->organisation_id, 'amount' => $entry->amount,
+            'payer' => $payer ? ['type' => $entry->customer_id !== null ? 'customer' : 'organisation', 'id' => $payer->id, 'name' => $payer->name] : null,
             'currency' => $entry->currency, 'reason' => $entry->reason, 'actor' => $entry->actor_name_snapshot,
             'credit_balance_before' => $entry->credit_balance_before, 'credit_balance_after' => $entry->credit_balance_after,
             'payment_unallocated_before' => $entry->payment_unallocated_before, 'payment_unallocated_after' => $entry->payment_unallocated_after,

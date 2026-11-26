@@ -5,6 +5,7 @@ import api from "@/lib/api";
 import PasswordInput from "@/components/ui/PasswordInput";
 import { assetUrl } from "@/lib/assetUrl";
 import { useToast } from "@/components/ui/useToast";
+import AccountSecurityPanel from "@/components/account/AccountSecurityPanel";
 
 export default function AdminProfilePage() {
   const { user, refreshUser } = useAuth();
@@ -75,6 +76,7 @@ export default function AdminProfilePage() {
         </section>
         <div className="flex justify-end"><button disabled={saving} className="btn-accent inline-flex min-h-11 items-center gap-2 rounded-xl px-5 font-bold disabled:opacity-60">{saving ? <Check className="animate-pulse" size={17} /> : <Save size={17} />}{saving ? "Saving..." : "Save profile"}</button></div>
       </form>
+      {user && <AccountSecurityPanel accountType="staff" email={user.email} phone={user.phone} emailVerifiedAt={user.email_verified_at} phoneVerifiedAt={user.phone_verified_at} onVerified={() => void refreshUser()} />}
     </div>
   );
 }

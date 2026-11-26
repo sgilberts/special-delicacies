@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Contracts\SmsOtpDelivery;
 use App\Exceptions\OtpDeliveryUnavailable;
+use App\Exceptions\OtpCooldownActive;
 use App\Mail\AccountOtpMail;
 use App\Mail\PasswordRecoveryMail;
 use App\Models\AccountSecurityChallenge;
@@ -103,10 +104,14 @@ class AccountSecurityService
         }
         $variants = GhanaPhoneNumber::lookupVariants($normalized);
         $model = $accountType === 'staff' ? User::class : Customer::class;
-        $account = $model::query()->where('is_active', true)
+        $accounts = $model::query()->where('is_active', true)
             ->whereRaw("REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', ''), '.', '') IN (?, ?, ?)", $variants)
-            ->first();
-        if (! $account) return;
+            ->limit(2)
+            ->get();
+        // Normalized phone formats can collide even when the stored strings differ.
+        // Refuse delivery when the destination cannot be tied to exactly one account.
+        if ($accounts->count() !== 1) return;
+        $account = $accounts->first();
         $code = (string) random_int(100000, 999999);
         try {
             $challenge = $this->createChallenge($account, 'password_recovery', 'phone', $normalized, Hash::make($code));
@@ -171,7 +176,7 @@ class AccountSecurityService
     {
         $accountQuery = AccountSecurityChallenge::query()->where('purpose', $purpose)->where('channel', $channel)->where('created_at', '>=', now()->subSeconds(60));
         $account instanceof Customer ? $accountQuery->where('customer_id', $account->id) : $accountQuery->where('user_id', $account->id);
-        if ($accountQuery->exists()) throw new OtpDeliveryUnavailable('Please wait before requesting another code.');
+        if ($accountQuery->exists()) throw new OtpCooldownActive('Please wait before requesting another code.');
 
         return AccountSecurityChallenge::query()->create([
             'public_id' => bin2hex(random_bytes(24)),

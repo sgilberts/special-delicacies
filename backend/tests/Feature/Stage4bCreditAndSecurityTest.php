@@ -16,6 +16,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Services\CustomerCreditService;
 use App\Services\PaymentAllocationService;
+use Database\Seeders\RoleAndPermissionSeeder;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -115,6 +116,27 @@ class Stage4bCreditAndSecurityTest extends TestCase
             ->assertJsonPath('data.accounts.1.balances.0.available_balance', '20.00');
     }
 
+    public function test_stage4b_permissions_are_granular_and_not_granted_to_ordinary_admin(): void
+    {
+        app(RoleAndPermissionSeeder::class)->run();
+        $adminRole = Role::where('slug', 'admin')->firstOrFail();
+        $this->assertFalse($adminRole->permissions()->whereIn('slug', [
+            'financials.deposits.view', 'financials.deposits.manage', 'financials.customer_credit.view', 'financials.customer_credit.manage',
+        ])->exists());
+        $superAdmin = Role::where('slug', 'super-admin')->firstOrFail();
+        $this->assertTrue($superAdmin->permissions()->where('slug', 'financials.customer_credit.manage')->exists());
+
+        $role = Role::create(['name' => 'Deposit Viewer', 'slug' => 'deposit-viewer']);
+        $permission = Permission::firstOrCreate(['slug' => 'financials.deposits.view'], ['name' => 'View deposit receipts', 'description' => 'View verified unallocated receipts']);
+        $role->permissions()->sync([$permission->id]);
+        $staff = User::factory()->create(['is_active' => true]);
+        $staff->roles()->attach($role);
+        Sanctum::actingAs($staff);
+        $this->getJson('/api/v1/admin/customer-credit/receipts')->assertOk();
+        $this->getJson('/api/v1/admin/customer-credit/balances')->assertForbidden();
+        $this->postJson('/api/v1/admin/customer-credit/applications', [])->assertForbidden();
+    }
+
     public function test_phone_otp_is_hashed_one_time_rate_limited_and_not_returned_by_api(): void
     {
         $sms = new class implements SmsOtpDelivery {
@@ -193,6 +215,24 @@ class Stage4bCreditAndSecurityTest extends TestCase
         $this->postJson('/api/v1/customers/login', ['phone' => '0200000701', 'password' => 'new-phone-password'])->assertOk();
     }
 
+    public function test_phone_recovery_refuses_ambiguous_normalized_phone_numbers(): void
+    {
+        $sms = new class implements SmsOtpDelivery {
+            public array $messages = [];
+            public function send(string $phone, string $message): void { $this->messages[] = [$phone, $message]; }
+        };
+        $this->app->instance(SmsOtpDelivery::class, $sms);
+        Customer::create([
+            'name' => 'Duplicate Phone Customer', 'phone' => '020-000-0701', 'email' => 'duplicate-phone@example.test',
+            'password' => 'another-customer-password', 'is_active' => true,
+        ]);
+
+        $this->postJson('/api/v1/customers/password/phone/forgot', ['phone' => '+233 20 000 0701'])->assertAccepted();
+
+        $this->assertSame([], $sms->messages);
+        $this->assertDatabaseCount('account_security_challenges', 0);
+    }
+
     public function test_phone_otp_attempt_limit_persists_and_expiry_prevents_replay(): void
     {
         $sms = new class implements SmsOtpDelivery {
@@ -209,6 +249,46 @@ class Stage4bCreditAndSecurityTest extends TestCase
         $this->assertSame(5, (int) $challenge->failed_attempts);
         $this->assertNotNull($challenge->consumed_at);
         $this->assertNull($this->customer->fresh()->phone_verified_at);
+    }
+
+    public function test_otp_resend_cooldown_and_expiry_are_enforced(): void
+    {
+        $sms = new class implements SmsOtpDelivery {
+            public array $messages = [];
+            public function send(string $phone, string $message): void { $this->messages[] = [$phone, $message]; }
+        };
+        $this->app->instance(SmsOtpDelivery::class, $sms);
+        $token = $this->customer->createToken('customer-session')->plainTextToken;
+        $request = $this->withToken($token)->postJson('/api/v1/customer/verification/phone/request');
+        $request->assertAccepted();
+        $this->withToken($token)->postJson('/api/v1/customer/verification/phone/request')->assertStatus(429);
+        $challengeId = $request->json('data.challenge_id');
+        preg_match('/code is (\d{6})/', $sms->messages[0][1], $matches);
+        $this->travel(11)->minutes();
+        $this->withToken($token)->postJson('/api/v1/customer/verification/phone/verify', ['challenge_id' => $challengeId, 'code' => $matches[1]])->assertUnprocessable();
+        $this->assertNull($this->customer->fresh()->phone_verified_at);
+    }
+
+    public function test_staff_and_customer_email_reset_links_cannot_cross_account_types(): void
+    {
+        Mail::fake();
+        $staff = User::factory()->create(['email' => 'stage4b-staff@example.test', 'password' => 'old-staff-password', 'is_active' => true]);
+        $staff->createToken('staff-session');
+        $this->postJson('/api/v1/auth/password/forgot', ['email' => $staff->email])->assertAccepted();
+        $resetUrl = null;
+        Mail::assertSent(PasswordRecoveryMail::class, function (PasswordRecoveryMail $mail) use (&$resetUrl): bool {
+            if (str_contains($mail->resetUrl, '/admin/password/reset')) $resetUrl = $mail->resetUrl;
+            return true;
+        });
+        parse_str((string) parse_url((string) $resetUrl, PHP_URL_QUERY), $query);
+        $payload = [
+            'challenge_id' => $query['challenge'], 'token' => $query['token'],
+            'password' => 'new-staff-password', 'password_confirmation' => 'new-staff-password',
+        ];
+        $this->postJson('/api/v1/customers/password/reset', $payload)->assertUnprocessable();
+        $this->postJson('/api/v1/auth/password/reset', $payload)->assertOk();
+        $this->assertTrue(Hash::check('new-staff-password', $staff->fresh()->password));
+        $this->assertDatabaseMissing('personal_access_tokens', ['tokenable_type' => User::class, 'tokenable_id' => $staff->id]);
     }
 
     private function invoice(Customer $payer, string $total, string $number, array $overrides = []): CommercialDocument

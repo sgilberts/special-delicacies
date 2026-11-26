@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import customerApi from "@/lib/customerApi";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 type AuthResponse = { success: boolean; data?: { token: string }; message?: string };
 
@@ -26,7 +27,7 @@ export default function CustomerRegisterPage() {
     } finally { setBusy(false); }
   }
 
-  const field = (name: keyof typeof form, label: string, type = "text", required = true) => <label className="block text-sm font-semibold">{label}<input required={required} type={type} autoComplete={name === "password_confirmation" ? "new-password" : name === "password" ? "new-password" : name} value={form[name]} onChange={e => setForm({ ...form, [name]: e.target.value })} className="mt-1 min-h-12 w-full rounded-xl border bg-[var(--color-input-background)] px-3 font-normal" style={{ borderColor: "var(--color-border)" }} /></label>;
+  const field = (name: keyof typeof form, label: string, type = "text", required = true) => <label className="block text-sm font-semibold">{label}{type === "password" ? <PasswordInput required={required} autoComplete="new-password" value={form[name]} onChange={e => setForm({ ...form, [name]: e.target.value })} className="mt-1 min-h-12 w-full rounded-xl border bg-[var(--color-input-background)] px-3 font-normal" style={{ borderColor: "var(--color-border)" }} /> : <input required={required} type={type} autoComplete={name} value={form[name]} onChange={e => setForm({ ...form, [name]: e.target.value })} className="mt-1 min-h-12 w-full rounded-xl border bg-[var(--color-input-background)] px-3 font-normal" style={{ borderColor: "var(--color-border)" }} />}</label>;
 
   return <div className="mx-auto grid min-h-[70vh] max-w-lg place-items-center px-4 py-10">
     <section className="w-full rounded-2xl border bg-[var(--color-surface)] p-6 shadow-[var(--shadow-md)] sm:p-8" style={{ borderColor: "var(--color-border)" }}>

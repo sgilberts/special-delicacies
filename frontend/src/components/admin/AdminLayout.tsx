@@ -126,6 +126,9 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   if (hasAnyPermission(userPermissions, ["financials.allocations.view", "financials.allocations.manage"], user?.roles)) {
     financeItems.push({ label: "Payment Allocations", to: "/admin/payment-allocations", icon: WalletCards });
   }
+  if (hasAnyPermission(userPermissions, ["financials.deposits.view", "financials.deposits.manage", "financials.customer_credit.view", "financials.customer_credit.manage"], user?.roles)) {
+    financeItems.push({ label: "Deposits & Credit", to: "/admin/customer-credit", icon: WalletCards });
+  }
   if (financeItems.length > 0) sections.push({ heading: "Finance", items: financeItems });
 
   if (hasAnyPermission(userPermissions, ["commercial_documents.view", "commercial_documents.manage"], user?.roles)) {

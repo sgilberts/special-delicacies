@@ -68,6 +68,8 @@ export interface AuthUser {
   name: string;
   email: string;
   phone?: string | null;
+  email_verified_at?: string | null;
+  phone_verified_at?: string | null;
   profile_photo_url?: string | null;
   is_active: boolean;
   roles: string[];

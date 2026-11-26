@@ -47,6 +47,7 @@ if (fs.existsSync(indexHtml)) {
     'admin/financials',
     'admin/payment-allocations',
     'admin/commercial-documents',
+    'admin/customer-credit',
     'admin/chat',
     'delivery',
     'delivery/checkout',

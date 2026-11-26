@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Exceptions\OtpDeliveryUnavailable;
+use App\Exceptions\OtpCooldownActive;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\User;
@@ -23,6 +24,8 @@ class AccountVerificationController extends Controller
             return response()->json(['success' => true, 'message' => 'Verification code sent.', 'data' => ['challenge_id' => $id]], 202);
         } catch (OtpDeliveryUnavailable) {
             return response()->json(['success' => false, 'message' => 'Verification delivery is currently unavailable. Please try again later.'], 503);
+        } catch (OtpCooldownActive) {
+            return response()->json(['success' => false, 'message' => 'Please wait before requesting another verification code.'], 429);
         }
     }
 
@@ -41,6 +44,8 @@ class AccountVerificationController extends Controller
             return response()->json(['success' => true, 'message' => 'Verification code sent.', 'data' => ['challenge_id' => $id]], 202);
         } catch (OtpDeliveryUnavailable) {
             return response()->json(['success' => false, 'message' => 'Verification delivery is currently unavailable. Please try again later.'], 503);
+        } catch (OtpCooldownActive) {
+            return response()->json(['success' => false, 'message' => 'Please wait before requesting another verification code.'], 429);
         }
     }
 
@@ -51,6 +56,8 @@ class AccountVerificationController extends Controller
             return response()->json(['success' => true, 'message' => 'Verification code sent.', 'data' => ['challenge_id' => $id]], 202);
         } catch (OtpDeliveryUnavailable) {
             return response()->json(['success' => false, 'message' => 'Verification delivery is currently unavailable. Please try again later.'], 503);
+        } catch (OtpCooldownActive) {
+            return response()->json(['success' => false, 'message' => 'Please wait before requesting another verification code.'], 429);
         }
     }
 
