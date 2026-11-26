@@ -238,7 +238,19 @@ class RoleAndPermissionSeeder extends Seeder
             ['name' => 'View Financial Reports', 'slug' => 'financials.reports.view', 'description' => 'View financial reports'],
             ['name' => 'Export Financial Reports', 'slug' => 'financials.reports.export', 'description' => 'Export validated financial reports'],
             ['name' => 'View Payment Reconciliation', 'slug' => 'financials.reconciliation.view', 'description' => 'View payment reconciliation queue'],
+            ['name' => 'View Payment Allocations', 'slug' => 'financials.allocations.view', 'description' => 'View eligible invoice receipts and payment allocation history'],
+            ['name' => 'Manage Payment Allocations', 'slug' => 'financials.allocations.manage', 'description' => 'Allocate eligible receipts to issued invoices'],
+            ['name' => 'Reverse Payment Allocations', 'slug' => 'financials.allocations.reverse', 'description' => 'Reverse an allocation with an audited reason'],
+            ['name' => 'View Deposit and Advance Receipts', 'slug' => 'financials.deposits.view', 'description' => 'View eligible deposit and advance-payment receipts'],
+            ['name' => 'Manage Deposit and Advance Receipts', 'slug' => 'financials.deposits.manage', 'description' => 'Classify verified receipts as deposits or advances'],
+            ['name' => 'View Customer Credit', 'slug' => 'financials.customer_credit.view', 'description' => 'View customer and organisation credit balances and ledger history'],
+            ['name' => 'Manage Customer Credit', 'slug' => 'financials.customer_credit.manage', 'description' => 'Designate eligible receipts as credit and apply credit to invoices'],
+            ['name' => 'View Invoice Payment Balances', 'slug' => 'financials.invoice_balances.view', 'description' => 'View derived invoice payment balances'],
             ['name' => 'Confirm Cash Payments', 'slug' => 'financials.payments.confirm_cash', 'description' => 'Confirm cash collection for an order'],
+            ['name' => 'View Commercial Documents', 'slug' => 'commercial_documents.view', 'description' => 'View quotations and invoices'],
+            ['name' => 'Manage Commercial Documents', 'slug' => 'commercial_documents.manage', 'description' => 'Create and edit draft quotations and invoices'],
+            ['name' => 'Issue Commercial Documents', 'slug' => 'commercial_documents.issue', 'description' => 'Issue quotations and invoices'],
+            ['name' => 'Void Commercial Documents', 'slug' => 'commercial_documents.void', 'description' => 'Void issued invoices with an audited reason'],
             ['name' => 'Receive Chat Conversations', 'slug' => 'chat.receive', 'description' => 'Receive automatically assigned customer conversations'],
             ['name' => 'View Assigned Chats', 'slug' => 'chat.view_assigned', 'description' => 'View conversations assigned to the current staff member'],
             ['name' => 'View All Chats', 'slug' => 'chat.view_all', 'description' => 'View all customer conversations'],
@@ -320,11 +332,17 @@ class RoleAndPermissionSeeder extends Seeder
                 ['name' => $roleData['name'], 'description' => $roleData['description']]
             );
 
-            // Sync permissions for this role
-            $permIds = [];
-            foreach ($roleData['permissions'] as $slug) {
-                if (isset($permissionModels[$slug])) {
-                    $permIds[] = $permissionModels[$slug]->id;
+            // Super Admin is defined as having every staff permission. Include
+            // permissions registered by approved migrations as well as the
+            // catalogue above, without crossing into organisation permissions.
+            if ($roleKey === 'super-admin') {
+                $permIds = Permission::query()->pluck('id')->all();
+            } else {
+                $permIds = [];
+                foreach ($roleData['permissions'] as $slug) {
+                    if (isset($permissionModels[$slug])) {
+                        $permIds[] = $permissionModels[$slug]->id;
+                    }
                 }
             }
             $role->permissions()->sync($permIds);

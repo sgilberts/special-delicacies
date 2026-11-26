@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CreateOrderRequest;
 use App\Http\Requests\UpdateOrderStatusRequest;
 use App\Models\Order;
+use App\Models\Customer;
+use App\Models\User;
 use App\Services\OrderService;
 use App\Services\GatewayPaymentService;
 use DomainException;
@@ -89,15 +91,22 @@ class OrderController extends Controller
     public function store(CreateOrderRequest $request): JsonResponse
     {
         try {
+            $authenticated = \Illuminate\Support\Facades\Auth::guard('sanctum')->user();
+            if ($authenticated instanceof Customer && ! $authenticated->is_active) {
+                return response()->json(['success' => false, 'message' => 'This customer account is deactivated.'], 403);
+            }
+
             if ($request->validated('payment_method') === Order::PAYMENT_METHOD_GATEWAY
                 && ! $this->paymentService->configuredGateway()) {
                 return response()->json(['success' => false, 'message' => 'Online payment is currently unavailable. Please choose cash on delivery.'], 422);
             }
 
-            $order = $this->orderService->createOrder(
-                $request->validated(),
-                $request->user()
-            );
+            $orderData = $request->validated();
+            if ($authenticated instanceof Customer && $authenticated->is_active) {
+                $orderData['customer_id'] = $authenticated->id;
+            }
+
+            $order = $this->orderService->createOrder($orderData, $authenticated instanceof User ? $authenticated : null);
 
             $order->load(['items', 'table', 'statusHistories']);
             $checkoutUrl = null;

@@ -1,7 +1,9 @@
 export function hasAnyPermission(
   grantedPermissions: readonly string[] | null | undefined,
   requiredPermissions: readonly string[],
+  roles: readonly string[] | null | undefined = [],
 ): boolean {
+  if (roles?.includes("super-admin")) return true;
   return requiredPermissions.some((permission) => grantedPermissions?.includes(permission));
 }
 

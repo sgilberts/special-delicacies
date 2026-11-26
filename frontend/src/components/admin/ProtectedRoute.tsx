@@ -41,7 +41,7 @@ export const ProtectedRoute: React.FC<{
     return <Navigate to="/admin/login" state={{ from: location }} replace />;
   }
 
-  if (requiredPermissions?.length && !hasAnyPermission(user.permissions, requiredPermissions)) {
+  if (requiredPermissions?.length && !hasAnyPermission(user.permissions, requiredPermissions, user.roles)) {
     return (
       <section
         role="alert"

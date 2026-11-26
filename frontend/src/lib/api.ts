@@ -31,7 +31,10 @@ export function invalidateCachedGets(): void {
 }
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("special_delicacies_token");
+  const staffToken = localStorage.getItem("special_delicacies_token");
+  const isOrderSubmission = config.method?.toLowerCase() === "post" && /\/orders\/?$/.test(config.url ?? "");
+  const customerToken = isOrderSubmission ? localStorage.getItem("special_delicacies_customer_token") : null;
+  const token = customerToken || staffToken;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

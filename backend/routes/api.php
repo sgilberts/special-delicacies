@@ -17,6 +17,11 @@ use App\Http\Controllers\Api\V1\Admin\RestaurantSettingController;
 use App\Http\Controllers\Api\V1\Admin\ReverbController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ContactController;
+use App\Http\Controllers\Api\V1\CustomerController;
+use App\Http\Controllers\Api\V1\CustomerCreditController;
+use App\Http\Controllers\Api\V1\CustomerCommercialDocumentController;
+use App\Http\Controllers\Api\V1\OrganisationController;
+use App\Http\Controllers\Api\V1\OrganisationInvitationController;
 use App\Http\Controllers\Api\V1\ChatController;
 use App\Http\Controllers\Api\V1\DeliveryOrderController;
 use App\Http\Controllers\Api\V1\MenuController;
@@ -24,10 +29,16 @@ use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\Admin\AdminPaymentGatewayController;
 use App\Http\Controllers\Api\V1\Admin\FinancialController;
+use App\Http\Controllers\Api\V1\Admin\PaymentAllocationController;
+use App\Http\Controllers\Api\V1\Admin\CustomerCreditController as AdminCustomerCreditController;
+use App\Http\Controllers\Api\V1\Admin\CommercialDocumentController;
 use App\Http\Controllers\Api\V1\Admin\ChatAdminController;
 use App\Http\Controllers\Api\V1\PublicContentController;
 use App\Http\Controllers\Api\V1\PublicDeliveryZoneController;
 use App\Http\Controllers\Api\V1\TableQrController;
+use App\Http\Middleware\EnsureCustomerAccount;
+use App\Http\Middleware\EnsureStaffAccount;
+use App\Http\Middleware\EnsureOrganisationPermission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -44,11 +55,13 @@ Route::prefix('v1')->group(function () {
 
     // Public Authentication (rate-limited: 5 attempts per minute per email+IP)
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
+    Route::post('/customers/register', [CustomerController::class, 'register'])->middleware('throttle:5,1');
+    Route::post('/customers/login', [CustomerController::class, 'login'])->middleware('throttle:5,1');
 
     // Authenticated user endpoint (Preserved from Phase 1)
     Route::get('/user', function (Request $request) {
         return $request->user();
-    })->middleware('auth:sanctum');
+    })->middleware(['auth:sanctum', EnsureStaffAccount::class]);
 
     // Public / Customer Foundations
     Route::get('/menu', [MenuController::class, 'index']);
@@ -60,6 +73,39 @@ Route::prefix('v1')->group(function () {
     Route::get('/orders/track/{orderNumber}', [PaymentController::class, 'track'])->middleware('throttle:20,1');
     Route::post('/payments/paystack/webhook', [PaymentController::class, 'webhook'])->middleware('throttle:120,1');
     Route::post('/payments/{provider}/webhook', [PaymentController::class, 'providerWebhook'])->middleware('throttle:120,1');
+
+    Route::middleware(['auth:sanctum', EnsureCustomerAccount::class])->prefix('customer')->group(function () {
+        Route::get('/profile', [CustomerController::class, 'profile']);
+        Route::patch('/profile', [CustomerController::class, 'updateProfile']);
+        Route::get('/orders', [CustomerController::class, 'orders']);
+        Route::post('/logout', [CustomerController::class, 'logout']);
+        Route::get('/quotations', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'quotation');
+        Route::get('/quotations/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'quotation');
+        Route::get('/quotations/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'quotation');
+        Route::post('/quotations/{commercialDocument}/accept', [CustomerCommercialDocumentController::class, 'accept'])->defaults('type', 'quotation');
+        Route::post('/quotations/{commercialDocument}/decline', [CustomerCommercialDocumentController::class, 'decline'])->defaults('type', 'quotation');
+        Route::get('/invoices', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'invoice');
+        Route::get('/invoices/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'invoice');
+        Route::get('/invoices/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'invoice');
+        Route::get('/credit', [CustomerCreditController::class, 'index']);
+        Route::get('/invitations', [OrganisationInvitationController::class, 'inbox']);
+        Route::post('/invitations/{invitation}/accept', [OrganisationInvitationController::class, 'accept']);
+
+        Route::get('/organisations', [OrganisationController::class, 'index']);
+        Route::post('/organisations', [OrganisationController::class, 'store'])->middleware('throttle:10,1');
+        Route::prefix('organisations/{organisation}')->group(function () {
+            Route::get('/', [OrganisationController::class, 'show'])->middleware(EnsureOrganisationPermission::class.':view');
+            Route::patch('/', [OrganisationController::class, 'update'])->middleware(EnsureOrganisationPermission::class.':profile.update');
+            Route::patch('/status', [OrganisationController::class, 'updateStatus'])->middleware(EnsureOrganisationPermission::class.':status.manage');
+            Route::get('/members', [OrganisationController::class, 'members'])->middleware(EnsureOrganisationPermission::class.':members.view');
+            Route::get('/invitations', [OrganisationInvitationController::class, 'organisationIndex'])->middleware(EnsureOrganisationPermission::class.':members.manage');
+            Route::post('/invitations', [OrganisationInvitationController::class, 'invite'])->middleware([EnsureOrganisationPermission::class.':members.manage', 'throttle:10,1']);
+            Route::delete('/invitations/{invitation}', [OrganisationInvitationController::class, 'cancel'])->middleware(EnsureOrganisationPermission::class.':members.manage');
+            Route::patch('/members/{membership}/role', [OrganisationController::class, 'updateMemberRole'])->middleware(EnsureOrganisationPermission::class.':members.roles.manage');
+            Route::patch('/members/{membership}/financial-access', [OrganisationController::class, 'updateMemberFinancialAccess'])->middleware(EnsureOrganisationPermission::class.':members.roles.manage');
+            Route::patch('/members/{membership}/status', [OrganisationController::class, 'updateMemberStatus'])->middleware(EnsureOrganisationPermission::class.':members.manage');
+        });
+    });
 
     // Visitor chat uses a random client-held capability; the server stores only its SHA-256 hash.
     Route::post('/chat/conversations', [ChatController::class, 'start'])->middleware('throttle:5,1');
@@ -78,7 +124,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/content', [PublicContentController::class, 'index']);
 
     // Authenticated & Role/Permission Protected Endpoints
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['auth:sanctum', EnsureStaffAccount::class])->group(function () {
         // Auth session endpoints
         Route::get('/auth/me', [AuthController::class, 'me']);
         Route::post('/auth/logout', [AuthController::class, 'logout']);
@@ -264,6 +310,33 @@ Route::prefix('v1')->group(function () {
                 ->middleware('permission:financials.reconciliation.view');
             Route::get('/export.csv', [FinancialController::class, 'export'])
                 ->middleware('permission:financials.reports.export');
+            Route::get('/payment-allocations/payments', [PaymentAllocationController::class, 'payments'])
+                ->middleware('permission:financials.allocations.view,financials.allocations.manage');
+            Route::get('/payment-allocations/payments/{paymentId}', [PaymentAllocationController::class, 'payment'])
+                ->middleware('permission:financials.allocations.view,financials.allocations.manage');
+            Route::get('/payment-allocations/payments/{paymentId}/invoices', [PaymentAllocationController::class, 'invoices'])
+                ->middleware('permission:financials.allocations.view,financials.allocations.manage');
+            Route::get('/payment-allocations/invoices/{commercialDocument}/balance', [PaymentAllocationController::class, 'invoiceBalance'])
+                ->middleware('permission:financials.invoice_balances.view,financials.allocations.view,financials.allocations.manage');
+            Route::get('/payment-allocations/invoices/{commercialDocument}', [PaymentAllocationController::class, 'invoiceAllocations'])
+                ->middleware('permission:financials.allocations.view,financials.allocations.manage');
+            Route::post('/payment-allocations', [PaymentAllocationController::class, 'store'])
+                ->middleware(['permission:financials.allocations.manage', 'throttle:30,1']);
+            Route::post('/payment-allocations/preview', [PaymentAllocationController::class, 'preview'])
+                ->middleware(['permission:financials.allocations.manage', 'throttle:60,1']);
+            Route::get('/payment-allocations/history', [PaymentAllocationController::class, 'history'])
+                ->middleware('permission:financials.allocations.view,financials.allocations.manage');
+            Route::post('/payment-allocations/{paymentAllocation}/reverse', [PaymentAllocationController::class, 'reverse'])
+                ->middleware(['permission:financials.allocations.reverse', 'throttle:20,1']);
+        });
+
+        Route::prefix('admin/customer-credit')->group(function () {
+            Route::get('/receipts', [AdminCustomerCreditController::class, 'receipts'])->middleware('permission:financials.deposits.view,financials.deposits.manage');
+            Route::post('/receipts/{paymentId}/intent', [AdminCustomerCreditController::class, 'classify'])->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
+            Route::get('/balances', [AdminCustomerCreditController::class, 'balances'])->middleware('permission:financials.customer_credit.view,financials.customer_credit.manage');
+            Route::get('/ledger', [AdminCustomerCreditController::class, 'ledger'])->middleware('permission:financials.customer_credit.view,financials.customer_credit.manage');
+            Route::post('/designations', [AdminCustomerCreditController::class, 'designate'])->middleware(['permission:financials.customer_credit.manage', 'throttle:20,1']);
+            Route::post('/applications', [AdminCustomerCreditController::class, 'apply'])->middleware(['permission:financials.customer_credit.manage', 'throttle:20,1']);
         });
 
         // Phase 9: Staff & User Management
@@ -310,6 +383,17 @@ Route::prefix('v1')->group(function () {
                 ->middleware('permission:financials.payments.confirm_cash');
             Route::patch('/{id}/status', [AdminOrderController::class, 'updateStatus'])
                 ->middleware('permission:orders.status.update,orders.confirm,orders.prepare,orders.ready,orders.deliver,orders.complete,orders.cancel');
+        });
+
+        Route::prefix('admin/commercial-documents')->group(function () {
+            Route::get('/', [CommercialDocumentController::class, 'index'])->middleware('permission:commercial_documents.view');
+            Route::post('/', [CommercialDocumentController::class, 'store'])->middleware('permission:commercial_documents.manage');
+            Route::get('/{commercialDocument}', [CommercialDocumentController::class, 'show'])->middleware('permission:commercial_documents.view');
+            Route::get('/{commercialDocument}/history', [CommercialDocumentController::class, 'history'])->middleware('permission:commercial_documents.view');
+            Route::patch('/{commercialDocument}', [CommercialDocumentController::class, 'update'])->middleware('permission:commercial_documents.manage');
+            Route::post('/{commercialDocument}/issue', [CommercialDocumentController::class, 'issue'])->middleware('permission:commercial_documents.issue');
+            Route::post('/{commercialDocument}/cancel', [CommercialDocumentController::class, 'cancel'])->middleware('permission:commercial_documents.manage');
+            Route::post('/{commercialDocument}/void', [CommercialDocumentController::class, 'void'])->middleware('permission:commercial_documents.void');
         });
 
         // Phase 9: Restaurant Website Content Management

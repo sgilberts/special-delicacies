@@ -42,8 +42,18 @@ const AdminContentPage = lazy(() => import("@/pages/admin/AdminContentPage"));
 const AdminAuditLogsPage = lazy(() => import("@/pages/admin/AdminAuditLogsPage"));
 const AdminProfilePage = lazy(() => import("@/pages/admin/AdminProfilePage"));
 const AdminFinancialsPage = lazy(() => import("@/pages/admin/AdminFinancialsPage"));
+const AdminPaymentAllocationsPage = lazy(() => import("@/pages/admin/AdminPaymentAllocationsPage"));
 const AdminChatPage = lazy(() => import("@/pages/admin/AdminChatPage"));
 const AdminChatSettingsPage = lazy(() => import("@/pages/admin/AdminChatSettingsPage"));
+const CustomerLoginPage = lazy(() => import("@/pages/customer/CustomerLoginPage"));
+const CustomerRegisterPage = lazy(() => import("@/pages/customer/CustomerRegisterPage"));
+const CustomerAccountPage = lazy(() => import("@/pages/customer/CustomerAccountPage"));
+const CustomerProtectedRoute = lazy(() => import("@/pages/customer/CustomerProtectedRoute"));
+const OrganisationsPage = lazy(() => import("@/pages/customer/OrganisationsPage"));
+const OrganisationDetailPage = lazy(() => import("@/pages/customer/OrganisationDetailPage"));
+const CustomerDocumentsPage = lazy(() => import("@/pages/customer/CustomerDocumentsPage"));
+const CustomerDocumentDetailPage = lazy(() => import("@/pages/customer/CustomerDocumentDetailPage"));
+const AdminCommercialDocumentsPage = lazy(() => import("@/pages/admin/AdminCommercialDocumentsPage"));
 
 function App() {
   const location = useLocation();
@@ -58,6 +68,13 @@ function App() {
         <Route path="menu" element={<MenuPage />} />
         <Route path="gallery" element={<GalleryPage />} />
         <Route path="contact" element={<ContactPage />} />
+        <Route path="account/login" element={<CustomerLoginPage />} />
+        <Route path="account/register" element={<CustomerRegisterPage />} />
+        <Route path="account" element={<CustomerProtectedRoute><CustomerAccountPage /></CustomerProtectedRoute>} />
+        <Route path="account/organisations" element={<CustomerProtectedRoute><OrganisationsPage /></CustomerProtectedRoute>} />
+        <Route path="account/organisations/:organisationId" element={<CustomerProtectedRoute><OrganisationDetailPage /></CustomerProtectedRoute>} />
+        <Route path="account/documents" element={<CustomerProtectedRoute><CustomerDocumentsPage /></CustomerProtectedRoute>} />
+        <Route path="account/documents/:documentType/:documentId" element={<CustomerProtectedRoute><CustomerDocumentDetailPage /></CustomerProtectedRoute>} />
       </Route>
 
       {/* Phase 8: Public Delivery Ordering (outside PublicLayout for full-screen UX) */}
@@ -119,6 +136,8 @@ function App() {
         <Route path="audit-logs" element={<AdminAuditLogsPage />} />
         <Route path="profile" element={<AdminProfilePage />} />
         <Route path="financials" element={<AdminFinancialsPage />} />
+        <Route path="payment-allocations" element={<ProtectedRoute requiredPermissions={["financials.allocations.view", "financials.allocations.manage"]}><AdminPaymentAllocationsPage /></ProtectedRoute>} />
+        <Route path="commercial-documents" element={<ProtectedRoute requiredPermissions={["commercial_documents.view"]}><AdminCommercialDocumentsPage /></ProtectedRoute>} />
         <Route path="chat" element={<AdminChatPage />} />
         <Route path="chat/settings" element={<AdminChatSettingsPage />} />
       </Route>

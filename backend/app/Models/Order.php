@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'order_number',
+    'customer_id',
     'idempotency_key',
     'order_type',
     'restaurant_table_id',
@@ -38,7 +39,7 @@ class Order extends Model
 {
     use HasFactory;
 
-    protected $hidden = ['payment_reference', 'gateway_checkout_url', 'latestPaymentTransaction', 'latest_payment_transaction'];
+    protected $hidden = ['customer_id', 'payment_reference', 'gateway_checkout_url', 'latestPaymentTransaction', 'latest_payment_transaction'];
 
     public const TYPE_DINE_IN = 'dine_in';
     public const TYPE_DELIVERY = 'delivery';
@@ -103,6 +104,12 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class, 'order_id');
+    }
+
+    /** Customer account associated when an authenticated customer placed the order. */
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
     }
 
     /**

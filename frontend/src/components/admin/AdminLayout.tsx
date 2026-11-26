@@ -23,6 +23,7 @@ import {
   History,
   WalletCards,
   MessageCircle,
+  FileText,
 } from "lucide-react";
 import { useAuth } from "@/app/providers/useAuth";
 import ThemeToggle from "@/components/public/ThemeToggle";
@@ -33,7 +34,7 @@ import { useConfirm } from "@/components/ui/ConfirmDialog";
 import { useRestaurantContent } from "@/hooks/useRestaurantContent";
 import { assetUrl } from "@/lib/assetUrl";
 import { cachedGet } from "@/lib/api";
-import { getStaffSecurityVisibility } from "@/lib/permissionAccess";
+import { getStaffSecurityVisibility, hasAnyPermission } from "@/lib/permissionAccess";
 
 const COLLAPSE_KEY = "sd_admin_sidebar_collapsed";
 
@@ -120,8 +121,15 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
     },
   ];
 
-  if (isSuperAdmin || userPermissions.includes("financials.view")) {
-    sections.push({ heading: "Finance", items: [{ label: "Financial Management", to: "/admin/financials", icon: WalletCards }] });
+  const financeItems: NavItem[] = [];
+  if (isSuperAdmin || userPermissions.includes("financials.view")) financeItems.push({ label: "Financial Management", to: "/admin/financials", icon: WalletCards });
+  if (hasAnyPermission(userPermissions, ["financials.allocations.view", "financials.allocations.manage"], user?.roles)) {
+    financeItems.push({ label: "Payment Allocations", to: "/admin/payment-allocations", icon: WalletCards });
+  }
+  if (financeItems.length > 0) sections.push({ heading: "Finance", items: financeItems });
+
+  if (hasAnyPermission(userPermissions, ["commercial_documents.view", "commercial_documents.manage"], user?.roles)) {
+    sections.push({ heading: "Commercial", items: [{ label: "Quotations & Invoices", to: "/admin/commercial-documents", icon: FileText }] });
   }
 
   if (isSuperAdmin || userPermissions.some((permission) => ["chat.view_assigned", "chat.view_all"].includes(permission))) {

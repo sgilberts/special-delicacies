@@ -95,4 +95,30 @@ class User extends Authenticatable
 
         return ! empty(array_intersect($permissionSlugs, $userPermissions));
     }
+
+    /**
+     * Return the staff permissions effective for this user.
+     *
+     * Super Admin's implicit access is represented by the server-side staff
+     * permission catalogue. Organisation membership permissions are stored
+     * separately and are intentionally not included here.
+     *
+     * @return list<string>
+     */
+    public function effectivePermissionSlugs(): array
+    {
+        if ($this->hasRole('super-admin')) {
+            return Permission::query()->orderBy('slug')->pluck('slug')->all();
+        }
+
+        $this->loadMissing('roles.permissions');
+
+        return $this->roles
+            ->flatMap(fn ($role) => $role->permissions)
+            ->pluck('slug')
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+    }
 }

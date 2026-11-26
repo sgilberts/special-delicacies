@@ -222,6 +222,7 @@ class OrderService
             ) {
                 $order = Order::create([
                     'order_number'       => self::generateOrderNumber(),
+                    'customer_id'        => $data['customer_id'] ?? null,
                     'idempotency_key'    => $explicitKey,
                     'order_type'         => $orderType,
                     'restaurant_table_id'=> $tableId,

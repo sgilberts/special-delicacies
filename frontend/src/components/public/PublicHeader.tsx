@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Link } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { Menu, UserRound } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
 import { useRestaurantContent } from "@/hooks/useRestaurantContent";
 import { assetUrl } from "@/lib/assetUrl";
@@ -40,6 +40,7 @@ export default function PublicHeader() {
               style={{ color: "var(--color-text)", letterSpacing: "-0.5px" }}>{content.restaurant_name}</span>
           </Link>
           <div className="flex items-center gap-2">
+            <Link to="/account" aria-label="Customer account" className="grid h-10 w-10 place-items-center rounded-full" style={{ color: "var(--color-text-secondary)", background: "var(--color-surface-secondary)" }}><UserRound size={18} /></Link>
             <ThemeToggle />
             <button
               onClick={() => setMobileMenuOpen(o => !o)}
@@ -77,7 +78,7 @@ export default function PublicHeader() {
           </nav>
 
           <div className="flex-shrink-0">
-            <ThemeToggle />
+            <div className="flex items-center gap-2"><Link to="/account" className="inline-flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]" aria-label="Customer account"><UserRound size={17} />Account</Link><ThemeToggle /></div>
           </div>
         </div>
       </div>

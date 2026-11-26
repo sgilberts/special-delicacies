@@ -39,7 +39,7 @@ class AuthController extends Controller
         // Load roles and permissions
         $user->loadMissing(['roles.permissions']);
         $roles = $user->roles->pluck('slug')->all();
-        $permissions = $user->roles->flatMap(fn ($role) => $role->permissions)->pluck('slug')->unique()->values()->all();
+        $permissions = $user->effectivePermissionSlugs();
 
         // Staff accounts with an assigned operational role may use the staff console.
         if ($user->roles()->doesntExist()) {
@@ -80,7 +80,7 @@ class AuthController extends Controller
         $user->loadMissing(['roles.permissions']);
 
         $roles = $user->roles->pluck('slug')->all();
-        $permissions = $user->roles->flatMap(fn ($role) => $role->permissions)->pluck('slug')->unique()->values()->all();
+        $permissions = $user->effectivePermissionSlugs();
 
         return response()->json([
             'success' => true,
@@ -127,7 +127,7 @@ class AuthController extends Controller
             'id' => $user->id, 'name' => $user->name, 'email' => $user->email, 'phone' => $user->phone,
             'is_active' => $user->is_active, 'profile_photo_url' => $user->profile_photo_path ? asset('storage/'.$user->profile_photo_path) : null,
             'roles' => $user->roles->pluck('slug')->all(),
-            'permissions' => $user->roles->flatMap(fn ($role) => $role->permissions)->pluck('slug')->unique()->values()->all(),
+            'permissions' => $user->effectivePermissionSlugs(),
         ]]);
     }
 
