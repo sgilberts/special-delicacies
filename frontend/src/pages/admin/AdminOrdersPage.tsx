@@ -785,14 +785,14 @@ export default function AdminOrdersPage() {
                   </div>
                 </div>
 
-                {selectedOrder.payment_method !== "gateway" && selectedOrder.payment_status !== "paid" && (
+                {((selectedOrder.payment_method !== "gateway" && selectedOrder.payment_status !== "paid") || (selectedOrder.payment_method === "gateway" && selectedOrder.order_type === "delivery" && selectedOrder.status === "delivered" && selectedOrder.payment_details?.delivery_fee_payment_method === "cash_on_delivery" && selectedOrder.payment_details.delivery_fee_payment_status === "pending")) && (
                   <button
                     type="button"
                     disabled={orderActionLoading}
                     onClick={() => handleConfirmPayment(selectedOrder.id)}
                     className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs transition-colors self-start sm:self-auto disabled:opacity-50"
                   >
-                    {orderActionLoading ? "Processing..." : "Confirm Cash Payment"}
+                    {orderActionLoading ? "Processing..." : selectedOrder.payment_method === "gateway" ? `Confirm Delivery Fee (GH₵ ${Number(selectedOrder.delivery_fee).toFixed(2)})` : "Confirm Cash Payment"}
                   </button>
                 )}
               </div>

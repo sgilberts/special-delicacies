@@ -61,6 +61,7 @@ DB_PASSWORD=your_database_password
 SYSTEM_ADMIN_DEFAULT_PASSWORD=Admin@123456/AdminPassword123!
 ```
 
+
 *Important: The database `erm_db` belongs to an external project. Never migrate, alter, or touch `erm_db`.*
 
 ### 5.2 Execute Database Migrations

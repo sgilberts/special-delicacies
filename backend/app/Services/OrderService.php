@@ -83,6 +83,7 @@ class OrderService
         // Validate delivery zone & address for delivery
         $zoneId = null;
         $deliveryFee = '0.00';
+        $deliveryFeeMinor = 0;
         $deliveryFeeMethod = null;
         if ($orderType === Order::TYPE_DELIVERY) {
             $zoneId = $data['delivery_zone_id'] ?? null;
@@ -97,9 +98,7 @@ class OrderService
                 throw new InvalidArgumentException('Delivery orders require a delivery address.');
             }
             $deliveryFee = number_format((float) $zone->delivery_fee, 2, '.', '');
-            if (($data['payment_method'] ?? null) !== Order::PAYMENT_METHOD_GATEWAY) {
-                throw new DomainException('Home delivery requires online payment for the food order.');
-            }
+            $deliveryFeeMinor = (int) round((float) $deliveryFee * 100);
             $deliveryFeeMethod = $data['delivery_fee_payment_method'] ?? ((filter_var($data['include_delivery_fee'] ?? true, FILTER_VALIDATE_BOOLEAN)) ? 'online' : 'cash_on_delivery');
             if (! in_array($deliveryFeeMethod, ['online', 'cash_on_delivery'], true)) {
                 throw new InvalidArgumentException('Choose online payment or cash on delivery for the delivery fee.');
@@ -175,7 +174,7 @@ class OrderService
             $menuItems = MenuItem::whereIn('id', $itemIds)->get()->keyBy('id');
 
             $processedItems = [];
-            $subtotal = 0.00;
+            $subtotalMinor = 0;
 
             foreach ($data['items'] as $itemData) {
                 $menuItemId = $itemData['menu_item_id'] ?? null;
@@ -197,26 +196,28 @@ class OrderService
                 }
 
                 // Trust only the database price
-                $unitPrice = (float) $menuItem->price;
-                $lineTotal = round($unitPrice * $quantity, 2);
-                $subtotal += $lineTotal;
+                $unitPriceMinor = (int) round((float) $menuItem->price * 100);
+                $lineTotalMinor = $unitPriceMinor * $quantity;
+                $subtotalMinor += $lineTotalMinor;
 
                 $processedItems[] = [
                     'menu_item_id' => $menuItem->id,
                     'item_name' => $menuItem->name,
-                    'unit_price' => number_format($unitPrice, 2, '.', ''),
+                    'unit_price' => number_format($unitPriceMinor / 100, 2, '.', ''),
                     'quantity' => $quantity,
                     'special_instructions' => $itemData['special_instructions'] ?? null,
-                    'line_total' => number_format($lineTotal, 2, '.', ''),
+                    'line_total' => number_format($lineTotalMinor / 100, 2, '.', ''),
                 ];
             }
 
-            $formattedSubtotal = number_format($subtotal, 2, '.', '');
+            $formattedSubtotal = number_format($subtotalMinor / 100, 2, '.', '');
             $includeDeliveryFee = $orderType === Order::TYPE_DELIVERY
                 ? $deliveryFeeMethod === 'online'
                 : false;
-            $total = number_format($subtotal + ($includeDeliveryFee ? (float) $deliveryFee : 0), 2, '.', '');
-            $grandTotal = number_format($subtotal + ($orderType === Order::TYPE_DELIVERY ? (float) $deliveryFee : 0), 2, '.', '');
+            $totalMinor = $subtotalMinor + ($includeDeliveryFee ? $deliveryFeeMinor : 0);
+            $grandTotalMinor = $subtotalMinor + ($orderType === Order::TYPE_DELIVERY ? $deliveryFeeMinor : 0);
+            $total = number_format($totalMinor / 100, 2, '.', '');
+            $grandTotal = number_format($grandTotalMinor / 100, 2, '.', '');
 
             $createdOrder = DB::transaction(function () use (
                 $data,
@@ -226,6 +227,7 @@ class OrderService
                 $zoneId,
                 $formattedSubtotal,
                 $deliveryFee,
+                $deliveryFeeMinor,
                 $total,
                 $grandTotal,
                 $deliveryFeeMethod,
@@ -252,7 +254,7 @@ class OrderService
                     'delivery_fee_payment_method' => $deliveryFeeMethod,
                     'delivery_fee_payment_status' => $orderType !== Order::TYPE_DELIVERY
                         ? Order::DELIVERY_FEE_NOT_APPLICABLE
-                        : Order::DELIVERY_FEE_PENDING,
+                        : ($deliveryFeeMinor === 0 ? Order::DELIVERY_FEE_NOT_APPLICABLE : Order::DELIVERY_FEE_PENDING),
                     'payment_method'     => ($data['payment_method'] ?? Order::PAYMENT_METHOD_CASH) === Order::PAYMENT_METHOD_GATEWAY
                         ? Order::PAYMENT_METHOD_GATEWAY
                         : Order::PAYMENT_METHOD_CASH,
@@ -357,6 +359,7 @@ class OrderService
                     );
                 }
                 if ($lockedOrder->delivery_fee_payment_method === 'cash_on_delivery'
+                    && (int) round((float) $lockedOrder->delivery_fee * 100) > 0
                     && $lockedOrder->delivery_fee_payment_status !== Order::DELIVERY_FEE_PAID) {
                     throw new DomainException('Cannot complete this delivery until the cash delivery fee is confirmed received.');
                 }

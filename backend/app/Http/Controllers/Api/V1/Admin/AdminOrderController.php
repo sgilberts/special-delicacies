@@ -244,7 +244,7 @@ class AdminOrderController extends Controller
         if ($request->user()?->hasPermission('financials.transactions.view')) return;
         $orders->each(function (Order $order): void {
             $order->setAttribute('payment_details', ['method' => $order->payment_method, 'status' => $order->payment_status]);
-            $order->makeHidden(['subtotal', 'delivery_fee', 'total', 'payment_reference', 'gateway_checkout_url']);
+            $order->makeHidden(['subtotal', 'delivery_fee', 'total', 'grand_total', 'delivery_fee_confirmed_by', 'payment_reference', 'gateway_checkout_url']);
             $order->items->each(fn ($item) => $item->makeHidden(['unit_price', 'line_total']));
         });
     }

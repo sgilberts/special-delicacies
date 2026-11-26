@@ -56,16 +56,8 @@ const checkoutSchema = z.object({
       /^(\+233|0)[0-9]{9}$/,
       "Enter a valid Ghana phone number (e.g. 024 XXX XXXX or +233 24 XXX XXXX)"
     ),
-  delivery_zone_id: z
-    .string()
-    .min(1, "Please select a delivery zone")
-    .refine((val) => !isNaN(parseInt(val, 10)) && parseInt(val, 10) > 0, {
-      message: "Please select a valid delivery zone",
-    }),
-  delivery_address: z
-    .string()
-    .min(10, "Please enter a more detailed delivery address (at least 10 characters)")
-    .max(300, "Address must not exceed 300 characters"),
+  delivery_zone_id: z.string().optional(),
+  delivery_address: z.string().optional(),
   customer_notes: z.string().max(500, "Notes must not exceed 500 characters").optional(),
 });
 
@@ -121,7 +113,8 @@ export default function DeliveryCheckoutPage() {
   const [zonesLoading, setZonesLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [includeDeliveryFee, setIncludeDeliveryFee] = useState(true);
+  const [fulfillment, setFulfillment] = useState<"pickup" | "delivery">("pickup");
+  const [deliveryFeeMethod, setDeliveryFeeMethod] = useState<"online" | "cash_on_delivery">("online");
   const [gatewayEnabled, setGatewayEnabled] = useState(false);
   const [gatewayName, setGatewayName] = useState("Paystack");
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "gateway">("cash");
@@ -199,11 +192,24 @@ export default function DeliveryCheckoutPage() {
   );
 
   const deliveryFee = selectedZone ? parseCurrency(selectedZone.delivery_fee) : 0;
-  const total = subtotal + (includeDeliveryFee ? deliveryFee : 0);
+  const onlineAmount = subtotal + (fulfillment === "delivery" && deliveryFeeMethod === "online" ? deliveryFee : 0);
 
   // Submit
   const onSubmit = async (values: CheckoutFormValues) => {
     setApiError(null);
+    if (fulfillment === "delivery" && !values.delivery_zone_id) {
+      setApiError("Select a delivery area before continuing.");
+      return;
+    }
+    if (fulfillment === "delivery" && (values.delivery_address?.trim().length ?? 0) < 10) {
+      setApiError("Enter a complete delivery address, including a nearby landmark or locality.");
+      return;
+    }
+    if (fulfillment === "delivery" && !gatewayEnabled) {
+      setApiError("Online payment is required for home delivery and is currently unavailable.");
+      return;
+    }
+    if (fulfillment === "delivery") setPaymentMethod("gateway");
     if (paymentMethod === "gateway" && !customerEmail.trim()) {
       setApiError("Enter your email address to continue to secure online payment.");
       return;
@@ -211,14 +217,17 @@ export default function DeliveryCheckoutPage() {
     setSubmitting(true);
 
     const payload = {
-      order_type: "delivery",
-      payment_method: paymentMethod,
-      customer_email: paymentMethod === "gateway" ? customerEmail.trim() : undefined,
+      order_type: fulfillment,
+      payment_method: fulfillment === "delivery" ? "gateway" : paymentMethod,
+      customer_email: (fulfillment === "delivery" || paymentMethod === "gateway") ? customerEmail.trim() : undefined,
       customer_name: values.customer_name.trim(),
       customer_phone: values.customer_phone.trim(),
-      delivery_zone_id: parseInt(values.delivery_zone_id, 10),
-      include_delivery_fee: includeDeliveryFee,
-      delivery_address: values.delivery_address.trim(),
+      ...(fulfillment === "delivery" ? {
+        delivery_zone_id: parseInt(values.delivery_zone_id || "0", 10),
+        delivery_fee_payment_method: deliveryFeeMethod,
+        include_delivery_fee: deliveryFeeMethod === "online",
+        delivery_address: values.delivery_address?.trim(),
+      } : {}),
       customer_notes: values.customer_notes?.trim() || undefined,
       items: cartItems.map((e) => ({
         menu_item_id: e.menu_item_id,
@@ -297,7 +306,7 @@ export default function DeliveryCheckoutPage() {
             Complete Your Order
           </h1>
           <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-            Fill in your delivery details to place your order
+            Choose collection or home delivery, then add your contact details.
           </p>
         </div>
 
@@ -305,6 +314,19 @@ export default function DeliveryCheckoutPage() {
           <div className="flex flex-col lg:flex-row gap-8">
             {/* ── LEFT: Form ───────────────────────────────────────────────── */}
             <div className="flex-1 space-y-5">
+              <section className="rounded-xl border border-stone-200 bg-white p-5 dark:border-stone-700 dark:bg-stone-800">
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-900 dark:text-stone-100">How would you like your order?</h2>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {([['pickup', 'Pick Up My Order', 'Collect at the restaurant. No delivery address or fee.'], ['delivery', 'Deliver To My Home', 'Choose a delivery area and pay the food amount online.']] as const).map(([value, label, description]) => (
+                    <label key={value} className={`flex min-h-20 cursor-pointer gap-3 rounded-xl border p-4 ${fulfillment === value ? 'border-[var(--color-accent)] bg-amber-50/50 dark:bg-amber-950/20' : 'border-stone-200 dark:border-stone-700'}`}>
+                      <input type="radio" name="fulfillment" value={value} checked={fulfillment === value} onChange={() => { setFulfillment(value); if (value === 'delivery') setPaymentMethod('gateway'); else setPaymentMethod('cash'); }} />
+                      <span><span className="block font-bold text-stone-900 dark:text-stone-100">{label}</span><span className="mt-1 block text-xs text-stone-500 dark:text-stone-400">{description}</span></span>
+                    </label>
+                  ))}
+                </div>
+                {fulfillment === 'pickup' && <p className="mt-4 rounded-lg bg-stone-50 p-3 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-200"><strong>Pickup location:</strong> {content.restaurant_address || 'Please contact the restaurant for pickup location details.'}<br /><span className="text-xs text-stone-500 dark:text-stone-400">{content.opening_hours_days || content.operating_hours || ''}</span></p>}
+              </section>
+
               {/* API error */}
               {apiError && (
                 <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
@@ -366,6 +388,7 @@ export default function DeliveryCheckoutPage() {
               </div>
 
               {/* Section: Delivery */}
+              {fulfillment === "delivery" && <>
               <div className="bg-white dark:bg-stone-800 rounded-xl p-5 border border-stone-200 dark:border-stone-700 space-y-4">
                 <h2 className="font-semibold text-stone-900 dark:text-stone-100 flex items-center gap-2 text-sm uppercase tracking-wide">
                   <MapPin size={15} style={{ color: "var(--color-accent)" }} />
@@ -436,6 +459,7 @@ export default function DeliveryCheckoutPage() {
                   <FieldError message={errors.delivery_address?.message} />
                 </div>
               </div>
+              </>}
 
               {/* Section: Notes */}
               <div className="bg-white dark:bg-stone-800 rounded-xl p-5 border border-stone-200 dark:border-stone-700 space-y-4">
@@ -463,18 +487,7 @@ export default function DeliveryCheckoutPage() {
             {/* ── RIGHT: Order Summary ──────────────────────────────────────── */}
             <aside className="lg:w-80 flex-shrink-0">
               <div className="sticky top-24 space-y-4">
-                {/* Pay on Delivery badge */}
-                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
-                  <Banknote size={20} className="text-green-600 dark:text-green-400 flex-shrink-0" />
-                  <div>
-                    <p className="font-semibold text-green-800 dark:text-green-300 text-sm">
-                      Pay on Delivery
-                    </p>
-                    <p className="text-xs text-green-600 dark:text-green-500">
-                      Cash payment when your order arrives
-                    </p>
-                  </div>
-                </div>
+                {fulfillment === "delivery" && <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm dark:border-blue-800 dark:bg-blue-950/30"><p className="font-semibold text-blue-900 dark:text-blue-200">Food is paid online before delivery.</p><p className="text-xs text-blue-800 dark:text-blue-300">Choose whether the delivery fee is also included online or collected in cash by authorized delivery staff.</p></div>}
 
                 {/* Order summary card */}
                 <div className="bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 overflow-hidden">
@@ -517,7 +530,7 @@ export default function DeliveryCheckoutPage() {
 
                   {/* Totals */}
                   <div className="border-t border-stone-200 dark:border-stone-700 px-4 py-4 space-y-2 bg-stone-50 dark:bg-stone-900">
-                    <div className="flex justify-between text-sm">
+                    {fulfillment === "delivery" && <div className="flex justify-between text-sm">
                       <span className="text-stone-500 dark:text-stone-400">Subtotal</span>
                       <span className="font-medium text-stone-900 dark:text-stone-100">
                         {formatCurrency(subtotal)}
@@ -534,30 +547,27 @@ export default function DeliveryCheckoutPage() {
                       >
                         {selectedZone ? formatCurrency(deliveryFee) : "Select zone"}
                       </span>
-                    </div>
-                    <label className="flex items-center gap-2 text-xs text-stone-600 dark:text-stone-300 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={includeDeliveryFee}
-                        onChange={(event) => setIncludeDeliveryFee(event.target.checked)}
-                        className="rounded border-stone-300 text-amber-700 focus:ring-amber-600"
-                      />
-                      Include delivery fee in total
-                    </label>
+                    </div>}
+                    {fulfillment === "delivery" && <div className="space-y-2 rounded-lg border border-stone-200 p-3 dark:border-stone-700">
+                      <p className="text-xs font-bold uppercase tracking-wide text-stone-500 dark:text-stone-400">Delivery fee payment</p>
+                      <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="radio" name="delivery_fee_method" checked={deliveryFeeMethod === "online"} onChange={() => setDeliveryFeeMethod("online")} />Pay fee online with the food</label>
+                      <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="radio" name="delivery_fee_method" checked={deliveryFeeMethod === "cash_on_delivery"} onChange={() => setDeliveryFeeMethod("cash_on_delivery")} />Pay fee in cash when the order is delivered</label>
+                    </div>}
                     <div className="flex justify-between text-base font-bold border-t border-stone-200 dark:border-stone-700 pt-2 mt-2">
-                      <span className="text-stone-900 dark:text-stone-100">Total</span>
-                      <span style={{ color: "var(--color-accent)" }}>{formatCurrency(total)}</span>
+                      <span className="text-stone-900 dark:text-stone-100">{fulfillment === "delivery" || paymentMethod === "gateway" ? "Pay online" : "Cash at collection"}</span>
+                      <span style={{ color: "var(--color-accent)" }}>{fulfillment === "delivery" ? formatCurrency(onlineAmount) : formatCurrency(paymentMethod === "gateway" ? subtotal : subtotal)}</span>
                     </div>
+                    {fulfillment === "delivery" && <div className="flex justify-between text-sm"><span className="text-stone-500 dark:text-stone-400">Cash on delivery</span><span>{formatCurrency(deliveryFeeMethod === "cash_on_delivery" ? deliveryFee : 0)}</span></div>}
                   </div>
                 </div>
 
-                {gatewayEnabled && (
+                {fulfillment === "pickup" && gatewayEnabled && (
                   <div className="rounded-xl border border-stone-200 dark:border-stone-700 p-4 space-y-2">
                     <p className="text-xs font-bold uppercase tracking-wide text-stone-500 dark:text-stone-400">Payment method</p>
                     <label className="flex items-center gap-3 rounded-lg p-3 hover:bg-stone-50 dark:hover:bg-stone-700/50 cursor-pointer">
                       <input type="radio" name="payment_method" checked={paymentMethod === "cash"} onChange={() => setPaymentMethod("cash")} />
                       <Banknote size={18} className="text-[var(--color-success)]" />
-                      <span className="text-sm text-stone-800 dark:text-stone-100">Cash on delivery</span>
+                      <span className="text-sm text-stone-800 dark:text-stone-100">Pay cash when collecting</span>
                     </label>
                     <label className="flex items-center gap-3 rounded-lg p-3 hover:bg-stone-50 dark:hover:bg-stone-700/50 cursor-pointer">
                       <input type="radio" name="payment_method" checked={paymentMethod === "gateway"} onChange={() => setPaymentMethod("gateway")} />
@@ -566,6 +576,8 @@ export default function DeliveryCheckoutPage() {
                     </label>
                   </div>
                 )}
+
+                {fulfillment === "delivery" && !gatewayEnabled && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">Online payment is unavailable. Home delivery checkout is paused; choose pickup or try again later.</p>}
 
                 {/* Submit */}
                 <button
@@ -581,8 +593,8 @@ export default function DeliveryCheckoutPage() {
                     </>
                   ) : (
                     <>
-                      {paymentMethod === "gateway" ? <CreditCard size={18} /> : <Banknote size={18} />}
-                      {paymentMethod === "gateway" ? `Continue to ${gatewayName} payment` : "Place Order — Pay on Delivery"}
+                      {fulfillment === "delivery" || paymentMethod === "gateway" ? <CreditCard size={18} /> : <Banknote size={18} />}
+                      {fulfillment === "delivery" ? `Pay food online with ${gatewayName}` : paymentMethod === "gateway" ? `Continue to ${gatewayName} payment` : "Place Pickup Order — Pay Cash"}
                     </>
                   )}
                 </button>

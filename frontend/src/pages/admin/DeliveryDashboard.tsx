@@ -243,7 +243,7 @@ function OrderCard({
             <span>{formatCurrency(order.delivery_fee)}</span>
           </div>
           <div className="flex justify-between text-sm font-bold text-[var(--color-text)] border-t border-[var(--color-border)] pt-1 mt-1">
-            <span>Total</span>
+            <span>Online amount</span>
             <span>{formatCurrency(order.total)}</span>
           </div>
         </div>
@@ -255,6 +255,7 @@ function OrderCard({
           </span>
           <PaymentBadge status={order.payment_status === "paid" ? "Paid" : order.payment_method === "gateway" ? "Gateway Pending" : "Cash Pending"} />
           {order.payment_method === "gateway" && order.payment_details?.reference && <span className="break-all text-[10px] text-[var(--color-text-secondary)]">Ref: {order.payment_details.reference}</span>}
+          {order.payment_method === "gateway" && order.payment_details?.delivery_fee_payment_method === "cash_on_delivery" && <span className="text-xs text-[var(--color-text-secondary)]">Delivery fee {order.payment_details.delivery_fee_payment_status === "paid" ? "received" : `due in cash: ${formatCurrency(order.delivery_fee)}`}</span>}
         </div>
 
         {/* Assignment */}
@@ -317,15 +318,15 @@ function OrderCard({
           )}
 
           {/* Confirm Cash Collected (Explicit action when cash is received) */}
-          {order.status === "delivered" && order.payment_status === "pending" && (isAssignedToMe || isAdmin) && (
+          {order.status === "delivered" && (order.payment_status === "pending" || (order.payment_method === "gateway" && order.payment_details?.delivery_fee_payment_method === "cash_on_delivery" && order.payment_details.delivery_fee_payment_status === "pending")) && (isAssignedToMe || isAdmin) && (
             <button
               onClick={() => onAction(order.id, "confirm_payment")}
               disabled={isLoading}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 disabled:opacity-60 transition-colors shadow-sm"
-              title="Explicitly confirm cash payment collected in full"
+              title={order.payment_method === "gateway" ? "Confirm cash delivery fee collected" : "Explicitly confirm cash payment collected in full"}
             >
               {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Banknote className="w-3.5 h-3.5" />}
-              Confirm Cash (GH₵ {parseFloat(order.total).toFixed(2)})
+              Confirm Cash (GH₵ {parseFloat(order.payment_method === "gateway" ? order.delivery_fee : order.total).toFixed(2)})
             </button>
           )}
 

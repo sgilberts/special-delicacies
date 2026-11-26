@@ -51,6 +51,9 @@ class PaymentController extends Controller
             'status' => $order->status,
             'payment_details' => $order->paymentDetails(),
             'total' => $order->total,
+            'food_amount' => $order->subtotal,
+            'delivery_fee' => $order->delivery_fee,
+            'grand_total' => $order->grand_total ?? $order->total,
             'created_at' => $order->created_at,
             'updated_at' => $order->updated_at,
             'items' => $order->items->map(fn ($item) => [

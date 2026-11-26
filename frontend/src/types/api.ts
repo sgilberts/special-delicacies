@@ -201,7 +201,7 @@ export interface OrderStatusHistory {
 export interface DineInOrder {
   id: number;
   order_number: string;
-  order_type: 'dine_in' | 'delivery';
+  order_type: 'dine_in' | 'delivery' | 'pickup';
   status: string;
   restaurant_table_id: number | null;
   delivery_zone_id: number | null;
@@ -214,6 +214,9 @@ export interface DineInOrder {
   subtotal: string;
   delivery_fee: string;
   total: string;
+  grand_total?: string;
+  delivery_fee_payment_method?: string | null;
+  delivery_fee_payment_status?: string | null;
   payment_method: string;
   payment_status: string;
   payment_details?: PaymentDetails;
@@ -233,6 +236,12 @@ export interface PaymentDetails {
   gateway_provider: string | null;
   reference: string | null;
   amount: string;
+  food_amount?: string;
+  delivery_fee?: string;
+  delivery_fee_payment_method?: string | null;
+  delivery_fee_payment_status?: string | null;
+  delivery_fee_confirmed_at?: string | null;
+  grand_total?: string;
   transaction_status?: string | null;
   currency?: string | null;
   verified_at?: string | null;
