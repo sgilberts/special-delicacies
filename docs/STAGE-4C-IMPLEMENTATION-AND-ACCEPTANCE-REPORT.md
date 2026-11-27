@@ -1,10 +1,11 @@
 # Stage 4C — Refunds, Credit Notes and Customer Credit Reversals: Implementation and Independent Acceptance Report
 
-**Status:** Independent verification and remediation complete.
-**Classification:** **CONDITIONALLY READY** — the implemented workflows are financially safe within the tested scope, one material integration defect was found and fixed, and the remaining conditions are owner decisions plus external provider verification.
-**Report date:** 2026-11-27
+**Status:** Final Stage 4C closure exercise complete — remaining technical risks closed or documented, owner decisions prepared.
+**Classification:** **READY FOR OWNER ACCEPTANCE** — every preventable financial risk in scope is closed or bounded by a documented, disabled-by-default control; what remains is business-policy approval (D1–D13, including the D10 linkage choice) and external provider merchant-capability verification.
+**Report date:** 2026-11-27 (supersedes the earlier CONDITIONALLY READY revision)
 **Design reference:** `docs/STAGE-4C-REFUNDS-CREDIT-NOTES-AND-REVERSALS-DESIGN.md`
 **Initial discovery reference:** `docs/STAGE-4C-INITIAL-REPORT.md`
+**Owner decision register:** `docs/STAGE-4C-OWNER-DECISION-REGISTER.md`
 
 ---
 
@@ -14,10 +15,11 @@
 |---|---|
 | Repository | `https://github.com/sgilberts/special-delicacies.git` |
 | Branch | `refunds-credit-notes` |
+| Closure-exercise base commit | `9017b9a6a49d119526927f645e2709f7113b6cdc` — *Fix credit reversal logic and resolve multiple payment processing defects* |
 | Base | `origin/main` at `95d651721aa17cbfaa52cc27209c4858d0970518` |
 | Implementation commit (HEAD at audit start) | `ceed566875e9db5271908c932502e32b9dea6be9` — *Implement Stage 4C refund, credit note, and reversal workflows* |
 | Working tree at audit start | Clean |
-| PR #2 | **OPEN**, `MERGEABLE`, head `refunds-credit-notes`, base `main`, 37 files, +4769/−15, no review decision |
+| PR #2 | **OPEN**, head `refunds-credit-notes`, base `main`, updated by this exercise (43 files, +5932/−35 against the base); not merged |
 | PR #1 | **OPEN** and untouched; not merged |
 | Deployment | None performed |
 | Sandbox database | MySQL **8.4.13**, `special_delicacies_db` |
@@ -29,9 +31,9 @@ initial discovery documents are preserved unmodified in `docs/`. PR #1's head is
 branch, but the Stage 4A/4B schema and services that Stage 4C depends on are present on `main` and were
 re-verified by the Stage 4A/4B regression suites below.
 
-**This audit's changes** are uncommitted in the sandbox and are pushed to the same branch by the platform at
-the end of the turn; they update PR #2 rather than opening a new PR. No reset, clean, stash, discard,
-force-push, merge or deploy was performed.
+**This closure exercise** changes 16 files (14 modified, 2 new) on top of `9017b9a` and is pushed to the same
+branch by the platform at the end of the turn; it updates PR #2 rather than opening a new PR. No reset, clean,
+stash, discard, force-push, merge or deploy was performed, and PR #1 was not touched.
 
 ---
 
@@ -133,19 +135,42 @@ stranded.
   authoritative check.
 - **Re-verification:** the regression test passes; the full suite and both MySQL suites pass.
 
-### 4.2 Defect fixed: duplicate provider submission under concurrency
+### 4.2 Dual-write residual risk — resolved in this exercise
 
-`RefundService::submit()` previously read the refund status, called the provider, and only then locked the row.
-Two concurrent submissions could both instruct the provider to refund the same payment.
+The previous revision held the provider call inside the refund-row transaction. That prevented two *concurrent*
+submissions, but it could not survive the dual-write failure: if the provider accepted the refund and the
+database commit then failed, the row rolled back to `approved`, and a retry would instruct the provider a second
+time. Paystack's refund endpoint also exposes no generic idempotency header, so disabling transaction retries was
+never a complete answer.
 
-- **Fix:** the provider call now happens inside the transaction while the refund row is locked, so a second
-  submission blocks and then observes `submitted`. That transaction is deliberately **not retried** (a
-  deadlock retry would re-invoke the provider). Provider failures raise a dedicated
-  `ProviderRefundUnavailable` exception; the transaction rolls back, the refund stays `approved`, a
-  `provider_error` event is recorded after the rollback, and the caller receives a retryable conflict.
-- **Residual risk (documented):** if the provider accepts the refund but the database commit fails, a retry can
-  duplicate the provider instruction. Paystack's refund endpoint exposes no idempotency key. This path is
-  disabled by default and must be reviewed before enabling provider refunds.
+**What changed:**
+
+1. **Provider idempotency key.** Paystack's `POST /refund` accepts an optional `reference` (“Unique reference for
+   the refund… Paystack generates one if you leave it out”). The application now derives a deterministic key from
+   the refund reference (`sdr` + SHA-256 prefix, `RefundService::providerIdempotencyKey()`) and sends it as that
+   `reference`. The same key is sent on any retry, so the provider cannot create a second refund, and the same key
+   can be used to look the refund up again (`GET /refund?reference=…`).
+2. **Two-phase submission.** `submit()` now commits a durable `submitting` intent — with the idempotency key —
+   **before** the provider call, performs the provider call outside any database transaction, and then persists
+   the result. A failure to persist the result leaves the refund in `submitting`, not `approved`.
+3. **No automatic resubmission.** `submit()` refuses a refund in `submitting` with “Reconcile it before
+   submitting again.” The unresolved funds stay reserved (`refundableMinor()` counts `submitting`).
+4. **Outcome classification.** A definitive provider refusal (4xx business error) returns the refund to
+   `approved`, because no money moved. A timeout, connection failure, 5xx, duplicate-reference conflict (409), or
+   a mismatched returned reference is an **unknown** outcome and keeps the refund in `submitting`.
+5. **Reconciliation.** `POST /admin/financials/refunds/{id}/reconcile` looks the refund up by the stable
+   reference. If found with matching amount and currency it records the provider reference and moves the refund
+   to `submitted` (confirmation remains a separate, independent step). If the provider is reachable and has no
+   such refund, the operator must explicitly pass `confirm_absent` before it returns to `approved`. If the lookup
+   itself fails, the refund stays unresolved.
+6. **Confirmation guard.** A provider-mode refund without a recorded provider reference cannot be confirmed.
+
+Every step writes a `refund_events` row (`submitting`, `submitted`, `reconciled`, `reconciled_absent`,
+`reconciliation_mismatch`, `provider_error`) plus an `admin_audit_logs` entry, so the whole history is auditable.
+
+**Residual, unavoidable dependency:** the provider lookup must be reachable and must honour the refund
+`reference`. If Paystack changes that behaviour, the refund stays unresolved and requires manual reconciliation —
+it is never auto-confirmed and never auto-resubmitted. Provider submission remains disabled by default (D12).
 
 ### 4.3 Fix: exact provider minor units
 
@@ -206,6 +231,55 @@ Two concurrent submissions could both instruct the provider to refund the same p
 
 ---
 
+### 4.8 Dual-write failure-scenario matrix
+
+The table below is the behaviour of the shipped code, exercised by `Stage4cRefundTest` where a scenario can be
+simulated (provider refusal, timeout, unknown outcome, reconciliation found/absent/mismatch, duplicate submit).
+
+| Scenario | Provider state | Database state | Another submission permitted? | Recovery procedure | Audit record |
+|---|---|---|---|---|---|
+| **Provider rejects the request** (definitive 4xx / business error) | No refund created | `approved`, `metadata.provider_outcome = rejected` | **Yes**, after correcting the cause | Operator fixes the request and submits again; the same idempotency key is reused | `submitting` → `provider_error` (to `approved`) |
+| **Provider accepts the request** | Refund pending/processing with provider id | `submitted` + `provider_refund_reference` | **No** — `submit()` returns the existing record | Independent confirm after provider verification (`processed`, exact amount and currency) | `submitting` → `submitted` (+ `confirmed`) |
+| **Provider times out** | Unknown — may or may not have accepted | `submitting`, `provider_outcome = unknown`; funds reserved | **No** — refused until reconciled | Reconcile by reference: found ⇒ `submitted`; absent (operator-confirmed) ⇒ `approved` | `submitting` → `provider_error` → `reconciled` / `reconciled_absent` |
+| **Application loses the connection** | Unknown (same class as timeout) | `submitting` | **No** | Same as timeout | Same as timeout |
+| **Provider accepts, database write fails** (result write or commit) | Refund exists at provider | `submitting` — the intent was committed first, so the outcome is durably unknown | **No** | Reconcile: the lookup finds the refund and records it; if the database is still failing it stays `submitting` and needs operator investigation | `submitting` (+ `provider_error` when the write failure is caught) |
+| **Duplicate submission** (double click, two operators, retry) | At most one refund — the row lock serialises the first transition and the provider `reference` is idempotent | One row in `submitting`/`submitted` | **No** — second caller sees `submitting`/`submitted` | None needed | One `submitting` event (verified: a double-clicked submit produced exactly one) |
+| **Verification response unavailable** | Refund exists, status unknown | `submitted` (provider accepted at submission) | **No** | Retry `confirm()` later; the refund is never auto-confirmed | `submitted`; failed confirmation raises a conflict, no state change |
+| **Provider reports an unknown reference** (verify/list 404) | No refund for that reference | `submitting` (if from reconcile) or `submitted` (if from confirm) | **No** | Manual investigation with the provider; if the operator confirms no refund exists, `reconcile` with `confirm_absent` returns it to `approved` | `provider_error` / `reconciled_absent` |
+| **Provider returns a different refund reference** | Ambiguous | `submitting` | **No** | Reconcile by the original reference | `provider_error` (unknown) |
+| **Manual payout path** (provider disabled, cash/bank) | Not applicable | `submitted` (`mode = manual`) | **No** | Independent confirmation with payment reference and recorded evidence | `submitted` → `confirmed` |
+
+**Guarantees that follow from the matrix:**
+
+- A refund is never marked `failed`, `confirmed` or `rejected` while its provider outcome is unknown; `fail()`
+  only accepts `approved`/`submitted`, and `submitting` is excluded.
+- Funds are never released while the outcome is unknown: `submitting` counts against the refundable balance.
+- The provider is never instructed twice for the same refund reference: the row lock serialises local
+  submissions and the provider-side `reference` is idempotent across retries.
+- Recovery is always an explicit, audited operator action — never an automatic retry loop.
+
+### 4.9 Credit-reversal correction — independent verification
+
+The earlier remediation made `creditDesignatedMinorForPayment()` subtract reversals of a receipt's
+designations. That correction was re-verified independently, and six additional regression tests were added to
+`Stage4cCreditReversalTest`.
+
+| Invariant | Evidence |
+|---|---|
+| Original credit entry unchanged | `test_valid_reversal_preserves_original_entry_and_reduces_derived_balance` asserts the designation row keeps its type and amount after a full reversal |
+| Reversal appended, never a mutation | Model events reject update/delete; the reversal is a new row with `reverses_entry_id` |
+| Receipt funds recalculated | `test_partial_reversal_releases_only_the_reversed_portion_of_receipt_funds`: 100 designated, 40 reversed ⇒ credit 60, receipt available 40, refundable 40 |
+| No double availability | `test_reversed_funds_cannot_remain_available_as_both_credit_and_receipt_funds`: after a full reversal credit is 0 and receipt funds are 100; allocating them makes refundable 0 |
+| Existing allocations respected | `test_reversal_respects_existing_allocations`: 40 allocated + 60 designated; reversing the 60 releases 60, the 40 allocation stays |
+| Existing designations respected | Net-designation calculation subtracts only reversals of *that receipt's* designations |
+| Partial reversals | Same partial test above |
+| Multiple reversals | `test_multiple_reversals_accumulate_and_cannot_over_reverse`: 30 + 30 ⇒ 60 released, a third request for 50 is rejected |
+| Concurrent reversals cannot over-reverse | `test_concurrent_reversal_requests_cannot_exceed_remaining_credit` (payer + entry locks, remaining re-checked at approval) |
+| Duplicate references cannot double-restore | `test_duplicate_reversal_reference_cannot_restore_funds_twice`: identical replay returns the same request, a second approval creates no second ledger entry |
+| Correct after later applications | `test_receipt_funds_stay_correct_after_application_and_a_later_reversal`: 60 applied, 40 reversed ⇒ credit 0, receipt 40, invoice outstanding 0 |
+
+All eleven checks pass on SQLite and the reversal suite passes on MySQL 8.4.13.
+
 ## 5. Defects found and remediated
 
 | # | Severity | Finding | Remediation | Status |
@@ -215,6 +289,8 @@ Two concurrent submissions could both instruct the provider to refund the same p
 | 3 | **Low** | Float conversion for provider refund minor units | Use `toMinorUnits()` | Fixed |
 | 4 | **Low** | Two tests hard-coded `https://special-delicacies.local`, failing whenever the container sets the preview URL | Tests now pin `config(['cors.allowed_origins'])` / `config(['app.frontend_url'])` | Fixed; suite is green with no environment overrides |
 | 5 | **Low (UI)** | Permission-denied page's “Return to dashboard” CTA rendered copper text on a copper background (computed colour == background), so its label was invisible | Replaced the ad-hoc classes with the shared `btn-accent` style (dark primary + off-white text) | Fixed; computed colour `rgb(250,247,242)` on `rgb(48,32,25)`, confirmed visually |
+| 6 | **High** | Dual-write residual risk: a provider-accepted refund whose database write failed could be resubmitted | Two-phase submission with a durable `submitting` intent, Paystack refund `reference` as a stable idempotency key, reconciliation endpoint, no automatic resubmission, funds reserved | Fixed; `Stage4cRefundTest` covers unknown outcome, intent ordering, definitive rejection and reconciliation (found/absent/mismatch) |
+| 7 | **Medium (test gap)** | Approval confirmations used browser-native dialogs, so the confirmation step could not be verified automatically | Switched the three Stage 4C pages to the app's `ConfirmProvider`, added a `usePrompt` variant, added the Reconcile action | Fixed; dialogs driven end to end in the running app (§9.1) |
 
 No other defect was found in the audited scope.
 
@@ -223,6 +299,11 @@ No other defect was found in the audited scope.
 ## 6. D1–D13 decision matrix
 
 “Enforcement” names the code path that actually blocks or permits the operation, not the UI.
+
+**Technical implementation is not business-policy approval.** The full register — original decision, exact
+recommended default, implemented behaviour, configuration key, consequences, approval status and current
+restriction — is in `docs/STAGE-4C-OWNER-DECISION-REGISTER.md`. The table below is the summary; the register is
+authoritative.
 
 | # | Recommended policy | Implemented policy | Config key | Enforcement location | Owner approval still required | Operation safely restricted |
 |---|---|---|---|---|---|---|
@@ -235,9 +316,9 @@ No other defect was found in the audited scope.
 | D7 | Only issued, non-voided invoices | Enforced | — | `CreditNoteService::assertEligibleInvoice` | **Yes** | Yes |
 | D8 | Creator ≠ issuer; super-admin | Enforced | `stage4c.credit_notes.require_independent_approval` | `Stage4cPolicy::creditNoteSeparationRequired`; `CreditNoteService::issue/void` | **Yes** | Yes — default `true` |
 | D9 | Partial credit notes up to remaining creditable | Enforced | `stage4c.credit_notes.partial_allowed` | `Stage4cPolicy::partialCreditNotesAllowed`; `CreditNoteService::create` | **Yes** | Yes |
-| D10 | Reversal needs an independent authorizer | Enforced for the authorizer; credit-note linkage remains open (§4.7.1) | `stage4c.credit_reversals.require_independent_approval` | `Stage4cPolicy::reversalSeparationRequired`; `CustomerCreditReversalService::approve` | **Yes** — decide the credit-note linkage sub-point | Partially — no double-spend, but reporting linkage needs a decision |
+| D10 | Reversal needs an independent authorizer | Independent authorizer enforced; credit-note linkage sub-decision **open** (register §3, report §4.7.1) | `stage4c.credit_reversals.require_independent_approval` | `Stage4cPolicy::reversalSeparationRequired`; `CustomerCreditReversalService::approve` | **Yes** — two parts: authorisation + linkage choice | Partially — super-admin only; no double-spend, but reporting linkage needs the owner's choice |
 | D11 | Refund the receipt amount; credit note mirrors invoice line totals | Enforced | — | `RefundService::create` (receipt amount); `CreditNoteService::totalsFromLines` (line snapshots) | **Yes** | Yes |
-| D12 | Provider unavailable: stay pending, record error, retry idempotently, never auto-confirm | Enforced | `stage4c.refunds.provider_submission_enabled` | `Stage4cPolicy::providerRefundsEnabled`; `RefundService::submit` + `ProviderRefundUnavailable` | **Yes** (enable provider submission) | Yes — default `false`, env var absent |
+| D12 | Provider unavailable: stay pending, record error, retry idempotently, never auto-confirm | Enforced and extended: unknown outcomes are held in `submitting` with a provider idempotency reference and resolved only by reconciliation | `stage4c.refunds.provider_submission_enabled` | `Stage4cPolicy::providerRefundsEnabled`; `RefundService::submit/reconcile`; `ProviderRefundUnavailable` / `ProviderRefundRejected` | **Yes** (enable provider submission) | Yes — default `false`, env var absent |
 | D12a | Keep the receipt `succeeded`; report refunds separately | Enforced | `stage4c.refunds.mark_transaction_refunded` | `Stage4cPolicy::markTransactionRefunded`; `RefundService::confirm` | **Yes** | Yes — default `false` |
 | D13 | Reverse only unconsumed credit (FIFO) | Enforced | `stage4c.credit_reversals.consumption_method` = `fifo` | `CustomerCreditReversalService::remainingReversibleMinor` | **Yes** | Yes — consumed credit rejected |
 
@@ -282,7 +363,7 @@ credentials and raw provider responses are not exposed in API responses.
 
 ```
 docker compose ... exec -T api php vendor/bin/phpunit
-OK (410 tests, 2002 assertions)
+OK (422 tests, 2057 assertions)
 ```
 
 0 failures, 0 errors, 0 skipped. `phpunit.xml` declares in-memory SQLite; no environment overrides were used.
@@ -290,11 +371,11 @@ The two previously failing URL tests now pass as part of the normal run.
 
 ### 8.2 MySQL 8.4.13 — disposable database
 
-`special_delicacies_stage4c_test` was dropped and recreated before the run.
+`special_delicacies_stage4c_closure_test` was dropped and recreated before the run, and dropped afterwards.
 
 ```
-BASE44_MYSQL_TEST_DATABASE=special_delicacies_stage4c_test php vendor/bin/phpunit --filter="Stage4c"
-OK (34 tests, 159 assertions)
+BASE44_MYSQL_TEST_DATABASE=special_delicacies_stage4c_closure_test php vendor/bin/phpunit --filter="Stage4c"
+OK (46 tests, 214 assertions)
 
 BASE44_MYSQL_TEST_DATABASE=special_delicacies_stage4c_test php vendor/bin/phpunit \
   --filter="PaymentAllocationTest|Stage4bCreditAndSecurityTest|CommercialDocumentsTest|FinancialManagementTest"
@@ -314,14 +395,15 @@ target engine.
 
 | Check | Result |
 |---|---|
-| `npm run lint` | **0 errors**, 55 warnings (React Compiler `set-state-in-effect` advisories consistent with existing pages) |
+| `npm run lint` | **0 errors**, 56 warnings (React Compiler advisories consistent with existing pages; the one new warning is the `only-export-components` advisory for the added `usePrompt` hook) |
 | `npm run build` (`tsc -b` + Vite + postbuild) | **Success** |
 | `npm run test:rbac` | **7 tests, 7 pass, 0 fail** |
 
 ### 8.5 Stage 4C test inventory
 
-`Stage4cRefundTest`, `Stage4cCreditNoteTest`, `Stage4cCreditReversalTest`, `Stage4cPermissionTest` — 34 tests
-on MySQL, including the new reversal-release regression and the four new permission/security tests.
+`Stage4cRefundTest`, `Stage4cCreditNoteTest`, `Stage4cCreditReversalTest`, `Stage4cPermissionTest` — 46 tests
+on MySQL, including the dual-write scenarios (unknown outcome, intent ordering, definitive rejection,
+reconciliation found/absent/mismatch), the six added reversal regressions and the permission/security tests.
 
 ---
 
@@ -345,16 +427,36 @@ returned to baseline.
 | Themes | Light verified; Dark verified (`data-resolved-theme=dark`, body `rgb(25,21,18)`); System verified (`data-theme=system`, resolves light) | — | — |
 | Horizontal overflow | None (`scrollWidth <= clientWidth + 2` on every page) | None | None |
 
-**Approval confirmation and duplicate submission.** The UI confirmation steps use browser-native
-`window.confirm`/`window.prompt`; the preview browser blocks on the native dialog, so the confirmation prompt
-itself could not be driven automatically. Approval, submission, confirmation, credit-note issuance and the
-credit-reversal rejection were therefore driven through the app's own authenticated API in the same browser
-session, and the UI was then verified to render each persisted state. Repeated approve/issue calls returned the
-same state without creating duplicates (idempotent replay). The native dialog remains **not automatically
-verified**; it should be tried by hand.
+### 9.1 Approval confirmation — gap closed and verified
+
+The previous revision could not verify the confirmation step because the three financial pages used
+browser-native `window.confirm`/`window.prompt`, which the automation browser blocks. The pages now use the
+application's own `ConfirmProvider` dialog (the component already used elsewhere in the admin), extended with a
+`usePrompt` variant for reasons, references and evidence. The dialog is part of the app, so the whole flow —
+including cancellation, duplicate clicks and the busy state — is drivable and was driven end to end.
+
+Each confirmation names the action, the amount and the reference:
+
+| Flow | Confirmation text shown to the operator | Result |
+|---|---|---|
+| Request a refund | “Request a refund of GHS 20.00 for payment STAGE4C-CLOSURE-PAY-1? No money moves until it is approved, submitted and confirmed.” | **Cancel** closed the dialog and created no row (row count unchanged) |
+| Refund approval | “Approve GHS 10.00 · stage4c-closure-refund-1? A different staff member must have requested it.” | **Confirm** recorded the approval; status `requested → approved` |
+| Refund submission | “Submit GHS 10.00 · stage4c-closure-refund-1? A provider refund is sent to the payment provider; a manual payout needs independent confirmation with evidence.” | **Confirm** moved the refund to `submitted`; the action buttons were observed **disabled** while the request was in flight; a second click on the already-closed dialog's control was a no-op and produced **exactly one** `submitted` event |
+| Credit-note issuance | “Issue credit note CN-2026-00000037 for GHS 50.00 to STAGE4C-CLOSURE Customer? This creates customer credit and may apply it to invoice STAGE4C-CLOSURE-INV-1.” | Confirmed ⇒ status `issued` |
+| Credit-reversal approval | “Approve the reversal of GHS 40.00 for STAGE4C-CLOSURE Customer (stage4c-closure-reversal-1)? A new compensating ledger entry will be posted and the credit will no longer be spendable.” | Confirmed ⇒ status `approved`, ledger entry posted |
+| Refund reconciliation | “Ask the provider whether refund stage4c-closure-reconcile-1 (GHS 5.00) was accepted? No new refund is issued.” | Confirmed ⇒ the unresolved refund stayed `submitting` and the UI showed “The provider could not be checked. The refund remains unresolved; do not resubmit it.” |
+
+Evidence: the dialog text was read from the live DOM for every action, each state was captured, the
+database was read afterwards, and a double click on the confirm control produced exactly one `submitted`
+event (no duplicate posting). Duplicate protection is also enforced server-side (row lock plus idempotent
+status transitions), so a stale click cannot double-post even if it reaches the API.
 
 **Mobile width note:** the platform's mobile preset renders at 375 px, not the requested 390 px. Tablet is
 exactly 768 px and desktop 1440 px.
+
+**Observed, pre-existing:** the preview tool reported repeated `GET /api/v1/content` requests on the admin
+pages (about 11 in 4 seconds). This is unrelated to the Stage 4C pages and was not introduced or changed by this
+exercise; it is recorded here so it is not mistaken for a Stage 4C defect.
 
 ---
 
@@ -375,36 +477,43 @@ evidence and a different staff member; the receipt remains `succeeded`.
 
 ## 11. Remaining dependencies and owner decisions
 
-1. **Sign off D1–D13**, in particular D10's credit-note linkage sub-decision (§4.7.1) and the assignment of
-   mutation permissions to finance roles (currently super-admin only).
-2. **Confirm merchant refund capability** for each provider, then decide whether to enable
-   `STAGE4C_PROVIDER_REFUNDS_ENABLED`; the dual-write residual risk (§4.2) must be accepted first.
-3. **Decide on stale pending reversal requests** (cancel/expire) — cosmetic/queue hygiene, no financial risk.
-4. **Try the native confirmation dialogs by hand** (approval, submission, confirmation, void, issue).
-5. **Production engine validation** of the `credit_ledger_entry_shape` replacement (verified on MySQL 8.4.13
+1. **Approve D1–D13** using `docs/STAGE-4C-OWNER-DECISION-REGISTER.md`, in particular:
+   - **D10** — the authorisation rule (recommended: independent authorizer) **and** the credit-note linkage
+     choice (void-first / linked adjustment / no linkage). Until the choice is made, credit-note-derived
+     reversals stay super-admin only and the reporting inconsistency in §4.7.1 remains.
+   - **D1/D2/D8** — assignment of mutation permissions to finance roles (currently super-admin only).
+2. **Confirm merchant refund capability** for Paystack (and whether Hubtel/Korapay support refunds at all),
+   then decide whether to enable `STAGE4C_PROVIDER_REFUNDS_ENABLED`. The dual-write risk is now controlled by a
+   provider idempotency reference plus reconciliation (§4.2/§4.8); the remaining dependency is the provider's
+   own behaviour, which can only be confirmed with merchant credentials.
+3. **Decide on stale pending reversal requests** (cancel/expire) — queue hygiene, no financial risk.
+4. **Production engine validation** of the `credit_ledger_entry_shape` replacement (verified on MySQL 8.4.13
    only).
 
 ---
 
 ## 12. Classification
 
-**CONDITIONALLY READY**
+**READY FOR OWNER ACCEPTANCE**
 
 Evidence for the classification:
 
 - **Safe:** the database guard refuses protected and non-disposable targets before any migration; the
-  development database returned to its exact baseline; provider refunds are disabled; mutation permissions are
-  super-admin only; separation of duties defaults on.
-- **Correct:** the material reversal/receipt defect was reproduced, fixed and re-verified; refundable funds,
-  credit-note caps, FIFO reversal, duplicate references and separation are covered by passing tests on SQLite
-  and MySQL 8.4.13; no over-refund, over-credit or over-reversal path was found.
-- **Complete within scope:** all three workflows, APIs, RBAC, audit trails and admin pages are implemented and
-  exercised at desktop, tablet and mobile widths, in light, dark and system themes, with no page-level
-  overflow.
-- **Not unconditional:** owner approval of D1–D13 (including the D10 credit-note linkage decision), provider
-  merchant-capability verification, the documented dual-write residual risk, and manual confirmation-dialog
-  testing remain outstanding. These are owner/external dependencies, not undisclosed implementation gaps.
+  development database returned to its exact baseline (4 users, 5 roles, 0 financial records); provider refunds
+  are disabled; mutation permissions are super-admin only; separation of duties defaults on.
+- **Correct:** the reversal/receipt defect was reproduced, fixed, re-verified and extended with six regression
+  tests; refundable funds, credit-note caps, FIFO reversal, duplicate references and separation are covered by
+  passing tests on SQLite (422 tests) and MySQL 8.4.13 (46 + 37 tests); no over-refund, over-credit or
+  over-reversal path was found.
+- **Dual-write risk controlled:** the uncertain-outcome path is now a durable `submitting` state with a
+  provider idempotency reference, explicit reconciliation and a documented failure matrix (§4.8). A refund is
+  never auto-resubmitted, auto-confirmed or falsely marked failed.
+- **Verifiable UI:** all three financial confirmation dialogs — and the new reconciliation action — were driven
+  in the running app, including cancel, confirm, duplicate click and the busy state (§9.1).
+- **What remains is not implementation work:** owner approval of D1–D13 (including D10's linkage choice),
+  finance-role permission assignment, and external provider merchant-capability verification. Each is an
+  owner/external dependency, documented rather than hidden.
 
-**Recommended next action:** the owner reviews §4.7 and §11, decides D10's linkage rule and the permission
-assignments, and — once merchant refund capability is confirmed — authorises provider submission. No merge or
-deployment is part of this work.
+**Recommended next action:** the owner works through the decision register, then authorises (or declines)
+provider submission once merchant refund capability is confirmed. No merge, deployment or Stage 4D work is part
+of this exercise.

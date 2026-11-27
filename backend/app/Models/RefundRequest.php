@@ -19,6 +19,13 @@ class RefundRequest extends Model
     public const STATUS_REQUESTED = 'requested';
     public const STATUS_APPROVED = 'approved';
     public const STATUS_REJECTED = 'rejected';
+    /**
+     * The provider instruction was dispatched (or is about to be) but its
+     * outcome has not been persisted yet. A refund in this state must be
+     * reconciled — never resubmitted automatically and never marked
+     * confirmed, failed or rejected.
+     */
+    public const STATUS_SUBMITTING = 'submitting';
     public const STATUS_SUBMITTED = 'submitted';
     public const STATUS_CONFIRMED = 'confirmed';
     public const STATUS_FAILED = 'failed';

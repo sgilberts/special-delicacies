@@ -15,7 +15,7 @@ class RefundController extends Controller
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'status' => ['nullable', 'in:requested,approved,submitted,confirmed,rejected,failed'],
+            'status' => ['nullable', 'in:requested,approved,submitting,submitted,confirmed,rejected,failed'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
         $page = $this->refunds->list($validated);
@@ -97,6 +97,17 @@ class RefundController extends Controller
         ]);
         try {
             $this->refunds->confirm($refund, $request->user(), $validated['provider_reference'] ?? null, $validated['evidence'] ?? null);
+            return response()->json(['success' => true, 'data' => $this->refunds->show($refund)]);
+        } catch (DomainException $exception) {
+            return $this->conflict($exception);
+        }
+    }
+
+    public function reconcile(Request $request, int $refund): JsonResponse
+    {
+        $validated = $request->validate(['confirm_absent' => ['nullable', 'boolean']]);
+        try {
+            $this->refunds->reconcile($refund, $request->user(), (bool) ($validated['confirm_absent'] ?? false));
             return response()->json(['success' => true, 'data' => $this->refunds->show($refund)]);
         } catch (DomainException $exception) {
             return $this->conflict($exception);

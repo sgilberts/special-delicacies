@@ -16,6 +16,7 @@ use App\Services\PaymentAllocationService;
 use App\Services\RefundService;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -154,26 +155,199 @@ class Stage4cRefundTest extends TestCase
         $service->confirm($refund->id, $this->approver, null, null);
     }
 
-    public function test_provider_unavailability_keeps_the_refund_approved_and_records_the_error(): void
+    public function test_unknown_provider_outcome_is_held_unresolved_and_cannot_be_resubmitted(): void
     {
         config(['stage4c.refunds.provider_submission_enabled' => true]);
         $this->paystackGateway();
-        Http::fake(['api.paystack.co/refund' => Http::response(['status' => false, 'message' => 'provider down'], 503)]);
+        Http::fake(fn () => throw new ConnectionException('cURL error 28: Operation timed out'));
 
         $payment = $this->payment('100.00', 'STAGE4C-REF-PAY-9', ['provider' => 'paystack', 'provider_reference' => 'PSK-REF-9']);
         $service = app(RefundService::class);
-        $refund = $service->create($payment->id, '100.00', 'Provider outage test', 'refund-ref-0010', $this->requester);
+        $refund = $service->create($payment->id, '100.00', 'Provider timeout test', 'refund-ref-0010', $this->requester);
         $service->approve($refund->id, $this->approver);
 
         try {
             $service->submit($refund->id, $this->approver);
-            $this->fail('A provider outage must not submit or confirm the refund.');
+            $this->fail('A provider timeout must not be treated as a completed or failed refund.');
         } catch (DomainException $exception) {
-            $this->assertStringContainsString('remains approved', $exception->getMessage());
+            $this->assertStringContainsString('unresolved', $exception->getMessage());
         }
 
-        $this->assertSame('approved', $refund->fresh()->status);
+        $held = $refund->fresh();
+        $this->assertSame('submitting', $held->status, 'An unknown provider outcome must stay unresolved.');
+        $this->assertSame('unknown', $held->metadata['provider_outcome']);
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($service->refundableMinor($payment->fresh())), 'Unresolved funds stay reserved.');
         $this->assertDatabaseHas('refund_events', ['refund_request_id' => $refund->id, 'action' => 'provider_error']);
+
+        // A second submission must be refused without calling the provider again.
+        try {
+            $service->submit($refund->id, $this->approver);
+            $this->fail('An unresolved refund must not be resubmitted.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Reconcile it before submitting again', $exception->getMessage());
+        }
+        $this->assertSame('submitting', $refund->fresh()->status);
+    }
+
+    public function test_submission_intent_is_persisted_before_the_provider_is_called_with_a_stable_reference(): void
+    {
+        config(['stage4c.refunds.provider_submission_enabled' => true]);
+        $this->paystackGateway();
+        $seen = [];
+        Http::fake(function ($request) use (&$seen) {
+            $seen['status_during_call'] = RefundRequest::query()->sole()->status;
+            $seen['body'] = $request->data();
+            return Http::response(['status' => true, 'data' => ['id' => 901, 'status' => 'pending', 'amount' => 10000, 'currency' => 'GHS', 'reference' => $request->data()['reference']]], 200);
+        });
+
+        $payment = $this->payment('100.00', 'STAGE4C-REF-PAY-13', ['provider' => 'paystack', 'provider_reference' => 'PSK-REF-13']);
+        $service = app(RefundService::class);
+        $refund = $service->create($payment->id, '100.00', 'Intent ordering test', 'refund-ref-0013', $this->requester);
+        $service->approve($refund->id, $this->approver);
+        $submitted = $service->submit($refund->id, $this->approver);
+
+        $expectedKey = $service->providerIdempotencyKey('refund-ref-0013');
+        $this->assertSame('submitting', $seen['status_during_call'], 'The intent must be durable before the provider call.');
+        $this->assertSame($expectedKey, $seen['body']['reference'], 'Paystack receives the stable refund reference.');
+        $this->assertSame($expectedKey, $service->providerIdempotencyKey('refund-ref-0013'), 'The reference is deterministic across retries.');
+        $this->assertSame('submitted', $submitted->status);
+        $this->assertSame('901', $submitted->provider_refund_reference);
+    }
+
+    public function test_definitive_provider_rejection_returns_the_refund_to_approved(): void
+    {
+        config(['stage4c.refunds.provider_submission_enabled' => true]);
+        $this->paystackGateway();
+        Http::fake(['api.paystack.co/refund' => Http::response(['status' => false, 'message' => 'Invalid transaction'], 422)]);
+
+        $payment = $this->payment('100.00', 'STAGE4C-REF-PAY-14', ['provider' => 'paystack', 'provider_reference' => 'PSK-REF-14']);
+        $service = app(RefundService::class);
+        $refund = $service->create($payment->id, '100.00', 'Definitive rejection test', 'refund-ref-0014', $this->requester);
+        $service->approve($refund->id, $this->approver);
+
+        try {
+            $service->submit($refund->id, $this->approver);
+            $this->fail('A definitive provider rejection must not be treated as submitted.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('rejected the refund', $exception->getMessage());
+        }
+
+        $this->assertSame('approved', $refund->fresh()->status, 'No money moved, so the refund returns to approved.');
+        $this->assertDatabaseHas('refund_events', ['refund_request_id' => $refund->id, 'action' => 'provider_error', 'to_status' => 'approved']);
+    }
+
+    public function test_reconciliation_records_an_accepted_provider_refund(): void
+    {
+        config(['stage4c.refunds.provider_submission_enabled' => true]);
+        $this->paystackGateway();
+        $service = app(RefundService::class);
+        $key = $service->providerIdempotencyKey('refund-ref-0015');
+        $lookupAvailable = false;
+        Http::fake(function ($request) use (&$lookupAvailable, $key) {
+            if ($request->method() === 'POST' || ! $lookupAvailable) {
+                throw new ConnectionException('cURL error 28: Operation timed out');
+            }
+            return Http::response(['status' => true, 'data' => [
+                ['id' => 1234, 'status' => 'pending', 'amount' => 10000, 'currency' => 'GHS', 'reference' => $key],
+            ]], 200);
+        });
+
+        $payment = $this->payment('100.00', 'STAGE4C-REF-PAY-15', ['provider' => 'paystack', 'provider_reference' => 'PSK-REF-15']);
+        $refund = $service->create($payment->id, '100.00', 'Reconciliation test', 'refund-ref-0015', $this->requester);
+        $service->approve($refund->id, $this->approver);
+        try { $service->submit($refund->id, $this->approver); } catch (DomainException) { /* outcome unknown */ }
+
+        $lookupAvailable = true;
+
+        $reconciled = $service->reconcile($refund->id, $this->approver);
+        $this->assertSame('submitted', $reconciled->status);
+        $this->assertSame('1234', $reconciled->provider_refund_reference);
+        $this->assertSame('accepted', $reconciled->metadata['provider_outcome']);
+        $this->assertDatabaseHas('refund_events', ['refund_request_id' => $refund->id, 'action' => 'reconciled']);
+    }
+
+    public function test_reconciliation_requires_explicit_absent_confirmation_before_allowing_resubmission(): void
+    {
+        config(['stage4c.refunds.provider_submission_enabled' => true]);
+        $this->paystackGateway();
+        $lookupAvailable = false;
+        Http::fake(function ($request) use (&$lookupAvailable) {
+            if ($request->method() === 'POST' || ! $lookupAvailable) {
+                throw new ConnectionException('cURL error 28: Operation timed out');
+            }
+            return Http::response(['status' => true, 'data' => []], 200);
+        });
+
+        $payment = $this->payment('100.00', 'STAGE4C-REF-PAY-16', ['provider' => 'paystack', 'provider_reference' => 'PSK-REF-16']);
+        $service = app(RefundService::class);
+        $refund = $service->create($payment->id, '100.00', 'Absent reconciliation test', 'refund-ref-0016', $this->requester);
+        $service->approve($refund->id, $this->approver);
+        try { $service->submit($refund->id, $this->approver); } catch (DomainException) { /* outcome unknown */ }
+
+        $lookupAvailable = true;
+
+        try {
+            $service->reconcile($refund->id, $this->approver);
+            $this->fail('An absent provider refund must need explicit operator confirmation.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('confirm_absent', $exception->getMessage());
+        }
+        $this->assertSame('submitting', $refund->fresh()->status);
+
+        $returned = $service->reconcile($refund->id, $this->approver, true);
+        $this->assertSame('approved', $returned->status);
+        $this->assertSame('absent_confirmed', $returned->metadata['provider_outcome']);
+        $this->assertDatabaseHas('refund_events', ['refund_request_id' => $refund->id, 'action' => 'reconciled_absent']);
+    }
+
+    public function test_reconciliation_stays_unresolved_when_the_provider_cannot_be_checked_or_the_amount_differs(): void
+    {
+        config(['stage4c.refunds.provider_submission_enabled' => true]);
+        $this->paystackGateway();
+        $service = app(RefundService::class);
+        $key = $service->providerIdempotencyKey('refund-ref-0017');
+        $lookup = 'down';
+        Http::fake(function ($request) use (&$lookup, $key) {
+            if ($request->method() === 'POST') throw new ConnectionException('cURL error 28: Operation timed out');
+            if ($lookup === 'down') return Http::response(['status' => false], 503);
+            return Http::response(['status' => true, 'data' => [
+                ['id' => 4321, 'status' => 'pending', 'amount' => 9999, 'currency' => 'GHS', 'reference' => $key],
+            ]], 200);
+        });
+
+        $payment = $this->payment('100.00', 'STAGE4C-REF-PAY-17', ['provider' => 'paystack', 'provider_reference' => 'PSK-REF-17']);
+        $refund = $service->create($payment->id, '100.00', 'Unavailable reconciliation test', 'refund-ref-0017', $this->requester);
+        $service->approve($refund->id, $this->approver);
+        try { $service->submit($refund->id, $this->approver); } catch (DomainException) { /* outcome unknown */ }
+
+        try {
+            $service->reconcile($refund->id, $this->approver);
+            $this->fail('An unavailable provider lookup must not resolve the refund.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('could not be checked', $exception->getMessage());
+        }
+        $this->assertSame('submitting', $refund->fresh()->status);
+
+        $lookup = 'mismatch';
+        try {
+            $service->reconcile($refund->id, $this->approver);
+            $this->fail('A mismatched provider refund must not be accepted.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('does not match', $exception->getMessage());
+        }
+        $this->assertSame('submitting', $refund->fresh()->status);
+        $this->assertDatabaseHas('refund_events', ['refund_request_id' => $refund->id, 'action' => 'reconciliation_mismatch']);
+    }
+
+    public function test_reconcile_endpoint_requires_approval_permission(): void
+    {
+        $payment = $this->payment('10.00', 'STAGE4C-REF-PAY-18');
+        $service = app(RefundService::class);
+        $refund = $service->create($payment->id, '10.00', 'Reconcile permission test', 'refund-ref-0018', $this->requester);
+
+        $viewer = $this->staffWith(['financials.refunds.view']);
+        Sanctum::actingAs($viewer);
+        $this->postJson('/api/v1/admin/financials/refunds/'.$refund->id.'/reconcile')->assertForbidden();
     }
 
     public function test_provider_pending_then_verified_confirmation(): void

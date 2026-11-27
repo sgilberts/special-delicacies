@@ -14,6 +14,7 @@
 - [Payment Result and Order Tracking](PAYMENT-RESULT-AND-ORDER-TRACKING.md) — Verified payment return, customer tracking, and public read caching.
 - [Phase 2 Caching, Tracking and Chat](PHASE-2-CACHING-TRACKING-CHAT.md) — Authenticated cache rules, Reverb tracking, chat permissions, APIs, attachments, and verification.
 - [Stage 4C Implementation and Acceptance Report](STAGE-4C-IMPLEMENTATION-AND-ACCEPTANCE-REPORT.md) — Refunds, credit notes and customer credit reversals: independent verification, database-safety audit, D1–D13 matrix, defects and remediation, SQLite/MySQL 8.4.13 evidence, responsive browser acceptance and provider capability status.
+- [Stage 4C Owner Decision Register](STAGE-4C-OWNER-DECISION-REGISTER.md) — D1–D13: original decision, recommended default, implemented behaviour, configuration key, consequences, approval status and current restriction; includes the D10 credit-note linkage options.
 - [Stage 4C Design](STAGE-4C-REFUNDS-CREDIT-NOTES-AND-REVERSALS-DESIGN.md) — Historical design record (D1–D13, workflows and risks) preserved from discovery.
 - [Stage 4C Initial Report](STAGE-4C-INITIAL-REPORT.md) — Historical discovery report preserved from discovery.
 

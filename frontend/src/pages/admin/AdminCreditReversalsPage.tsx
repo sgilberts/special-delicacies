@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useAuth } from "@/app/providers/useAuth";
+import { useConfirm, usePrompt } from "@/components/ui/ConfirmDialog";
 
 type Payer = { type: string; id: number; name: string };
 type EligibleEntry = {
@@ -18,6 +19,8 @@ type Page<T> = { data: T[] };
 
 export default function AdminCreditReversalsPage() {
   const { user } = useAuth();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
   const isSuperAdmin = user?.roles?.includes("super-admin") ?? false;
   const permissions = user?.permissions ?? [];
   const canView = isSuperAdmin || permissions.some(p => ["financials.credit_reversals.view", "financials.credit_reversals.initiate", "financials.credit_reversals.approve"].includes(p));
@@ -53,9 +56,15 @@ export default function AdminCreditReversalsPage() {
     } finally { setBusy(false); }
   }
 
-  const initiate = () => {
+  const initiate = async () => {
     if (!entryId) { setError("Select a credit entry to reverse."); return; }
-    if (!window.confirm(`Request a reversal of ${amount}? Only unconsumed credit can be reversed; a different staff member must approve it.`)) return;
+    const entry = entries.find(item => item.ledger_entry_id === entryId);
+    const ok = await confirm({
+      title: "Request a credit reversal",
+      message: `Request a reversal of ${entry?.currency ?? ""} ${amount} of ${entry?.payer.name ?? "the payer"}'s credit (${entry?.operation_reference ?? ""})? Only unconsumed credit can be reversed, and a different staff member must approve it.`,
+      confirmLabel: "Request reversal",
+    });
+    if (!ok) return;
     void run(async () => {
       await api.post("/admin/financials/credit-reversals", {
         ledger_entry_id: entryId, amount, reason, operation_reference: `credit-reversal-${crypto.randomUUID()}`,
@@ -64,13 +73,26 @@ export default function AdminCreditReversalsPage() {
     }, "Credit reversal requested. It now needs a different approver.");
   };
 
-  const approve = (request: ReversalRequest) => {
-    if (!window.confirm("Approve this reversal? A new compensating ledger entry will be posted.")) return;
+  const approve = async (request: ReversalRequest) => {
+    const ok = await confirm({
+      title: "Approve credit reversal",
+      message: `Approve the reversal of ${request.currency} ${request.amount} for ${request.payer.name} (${request.operation_reference})? A new compensating ledger entry will be posted and the credit will no longer be spendable.`,
+      confirmLabel: "Approve reversal",
+      tone: "danger",
+    });
+    if (!ok) return;
     void run(async () => { await api.post(`/admin/financials/credit-reversals/${request.id}/approve`); }, "Credit reversal approved and posted.");
   };
 
-  const reject = (request: ReversalRequest) => {
-    const entered = window.prompt("Reason for rejecting this reversal:"); if (!entered) return;
+  const reject = async (request: ReversalRequest) => {
+    const entered = await prompt({
+      title: "Reject credit reversal",
+      message: `Record the reason for rejecting ${request.currency} ${request.amount} (${request.operation_reference}).`,
+      label: "Reason",
+      confirmLabel: "Reject reversal",
+      tone: "danger",
+    });
+    if (!entered) return;
     void run(async () => { await api.post(`/admin/financials/credit-reversals/${request.id}/reject`, { reason: entered }); }, "Credit reversal rejected.");
   };
 
@@ -120,8 +142,8 @@ export default function AdminCreditReversalsPage() {
           <td className="p-2">{request.requested_by ?? "—"}<small className="block text-[var(--color-text-secondary)]">{new Date(request.requested_at).toLocaleString()}</small></td>
           <td className="p-2"><div className="flex flex-wrap gap-1">
             {canApprove && request.status === "requested" && <>
-              <button type="button" disabled={busy} onClick={() => approve(request)} className="min-h-9 rounded-lg border px-2 font-semibold" style={{ borderColor: "var(--color-border)" }}>Approve</button>
-              <button type="button" disabled={busy} onClick={() => reject(request)} className="min-h-9 rounded-lg border px-2 font-semibold text-[var(--color-danger)]" style={{ borderColor: "var(--color-border)" }}>Reject</button>
+              <button type="button" disabled={busy} onClick={() => void approve(request)} className="min-h-9 rounded-lg border px-2 font-semibold" style={{ borderColor: "var(--color-border)" }}>Approve</button>
+              <button type="button" disabled={busy} onClick={() => void reject(request)} className="min-h-9 rounded-lg border px-2 font-semibold text-[var(--color-danger)]" style={{ borderColor: "var(--color-border)" }}>Reject</button>
             </>}
           </div></td>
         </tr>)}

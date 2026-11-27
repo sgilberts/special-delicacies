@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\ProviderRefundRejected;
 use App\Exceptions\ProviderRefundUnavailable;
 use App\Models\PaymentTransaction;
 use App\Models\RefundEvent;
@@ -82,6 +83,8 @@ class RefundService
             ])->values(),
             'provider_supports_refunds' => $this->policy->providerSupportsRefunds($refund->payment?->provider),
             'provider_submission_enabled' => $this->policy->providerRefundsEnabled(),
+            'provider_outcome' => $refund->metadata['provider_outcome'] ?? null,
+            'reconciliation_required' => $refund->status === RefundRequest::STATUS_SUBMITTING,
         ];
     }
 
@@ -180,38 +183,35 @@ class RefundService
         }, 3);
     }
 
+    /**
+     * Submit an approved refund.
+     *
+     * Provider submissions are deliberately split in two database phases around
+     * the provider call:
+     *
+     *   1. Persist `submitting` (the intent, with a stable provider reference)
+     *      and commit BEFORE the provider is called. If the process dies after
+     *      this point the intent is durable.
+     *   2. Call the provider outside any database transaction, then persist the
+     *      result.
+     *
+     * If the provider accepts the refund but the second write fails, the refund
+     * stays `submitting` — an unresolved outcome. It is never silently rolled
+     * back to `approved` (which would allow a duplicate refund) and it is never
+     * marked confirmed, failed or rejected. Reconciliation resolves it.
+     */
     public function submit(int $id, User $actor): RefundRequest
     {
-        // The refund row is locked for the whole submission, including the
-        // provider call, so two concurrent submissions cannot both instruct the
-        // provider to refund the same payment. The transaction is not retried:
-        // a deadlock retry would re-invoke the provider.
-        try {
-            return DB::transaction(function () use ($id, $actor): RefundRequest {
-                $refund = RefundRequest::query()->lockForUpdate()->with('payment')->findOrFail($id);
-                if ($refund->status === RefundRequest::STATUS_SUBMITTED) return $refund;
-                if ($refund->status !== RefundRequest::STATUS_APPROVED) throw new DomainException('Only approved refunds can be submitted.');
+        $refund = DB::transaction(function () use ($id, $actor): RefundRequest {
+            $refund = RefundRequest::query()->lockForUpdate()->with('payment')->findOrFail($id);
+            if ($refund->status === RefundRequest::STATUS_SUBMITTED) return $refund;
+            if ($refund->status === RefundRequest::STATUS_SUBMITTING) {
+                throw new DomainException('The provider outcome for this refund is unconfirmed. Reconcile it before submitting again.');
+            }
+            if ($refund->status !== RefundRequest::STATUS_APPROVED) throw new DomainException('Only approved refunds can be submitted.');
 
-                $payment = $refund->payment;
-                if ($this->policy->providerRefundsEnabled() && $this->policy->providerSupportsRefunds($payment?->provider)) {
-                    try {
-                        $result = $this->gateway->initiateRefund($payment, (string) $refund->amount, $refund->refund_reference);
-                    } catch (\Throwable $exception) {
-                        throw ProviderRefundUnavailable::from($exception);
-                    }
-
-                    $refund->forceFill([
-                        'status' => RefundRequest::STATUS_SUBMITTED,
-                        'provider' => $payment->provider,
-                        'provider_refund_reference' => $result['provider_refund_reference'],
-                        'submitted_at' => now(),
-                        'metadata' => array_merge((array) $refund->metadata, ['mode' => 'provider', 'provider_status' => $result['provider_status']]),
-                    ])->save();
-                    $this->event($refund, 'submitted', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_SUBMITTED, $actor, null, $result['provider_refund_reference'], ['mode' => 'provider']);
-                    $this->audit->log($actor, 'stage4c.refund.submitted', 'Submitted refund '.$refund->refund_reference.' to the provider.', $refund, null, ['provider' => $payment->provider]);
-                    return $refund->fresh(['payment']);
-                }
-
+            $payment = $refund->payment;
+            if (! ($this->policy->providerRefundsEnabled() && $this->policy->providerSupportsRefunds($payment?->provider))) {
                 $refund->forceFill([
                     'status' => RefundRequest::STATUS_SUBMITTED,
                     'provider' => $payment?->provider ?: 'manual',
@@ -221,13 +221,112 @@ class RefundService
                 $this->event($refund, 'submitted', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_SUBMITTED, $actor, 'Manual refund instruction recorded.', null, ['mode' => 'manual']);
                 $this->audit->log($actor, 'stage4c.refund.submitted', 'Recorded a manual refund instruction for '.$refund->refund_reference.'.', $refund, null, ['mode' => 'manual']);
                 return $refund->fresh(['payment']);
-            }, 1);
-        } catch (ProviderRefundUnavailable $exception) {
-            // D12: the transaction rolled back, so the refund is still approved.
-            // Record the provider failure as an audit event and allow a retry.
-            $this->recordProviderError($id, $actor, $exception->getPrevious()?->getMessage() ?? $exception->getMessage());
-            throw new DomainException('The payment provider could not accept the refund right now. The refund remains approved and can be retried safely.');
+            }
+
+            // Phase 1: durable submission intent, committed before the provider call.
+            $refund->forceFill([
+                'status' => RefundRequest::STATUS_SUBMITTING,
+                'provider' => $payment->provider,
+                'submitted_at' => now(),
+                'metadata' => array_merge((array) $refund->metadata, [
+                    'mode' => 'provider',
+                    'provider_outcome' => 'unknown',
+                    'provider_idempotency_key' => $this->providerIdempotencyKey($refund->refund_reference),
+                ]),
+            ])->save();
+            $this->event($refund, 'submitting', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_SUBMITTING, $actor, 'Provider refund instruction dispatched; outcome not yet recorded.', null, ['mode' => 'provider']);
+
+            return $refund;
+        }, 1);
+
+        // Manual submissions and idempotent replays are already complete.
+        if ($refund->status !== RefundRequest::STATUS_SUBMITTING || ($refund->metadata['mode'] ?? null) !== 'provider') {
+            return $refund;
         }
+
+        $key = $this->providerIdempotencyKey($refund->refund_reference);
+        try {
+            $result = $this->gateway->initiateRefund($refund->payment, (string) $refund->amount, $refund->refund_reference, $key);
+        } catch (ProviderRefundRejected $exception) {
+            // Definitive refusal: no money moved, so returning to `approved` is safe.
+            try {
+                $this->markProviderRejected($id, $actor, $exception->getPrevious()?->getMessage() ?? $exception->getMessage());
+            } catch (\Throwable) {
+                // The state write failed, so the refund stays `submitting`.
+                throw new DomainException('The payment provider rejected the refund, but the refund could not be returned to approved. Reconcile it before submitting again.');
+            }
+            throw new DomainException('The payment provider rejected the refund. The refund remains approved and can be corrected and retried.');
+        } catch (\Throwable $exception) {
+            // Unknown outcome: keep `submitting` and require reconciliation.
+            $this->recordProviderErrorQuietly($id, $actor, $exception->getPrevious()?->getMessage() ?? $exception->getMessage());
+            throw new DomainException('The provider did not confirm whether it accepted this refund. The refund is held as unresolved and must be reconciled before any further submission.');
+        }
+
+        try {
+            return $this->recordProviderAcceptance($id, $actor, $result, 'submitted');
+        } catch (\Throwable $exception) {
+            // The provider accepted the refund but the result could not be
+            // written: the refund stays `submitting` and must be reconciled.
+            $this->recordProviderErrorQuietly($id, $actor, 'Provider accepted the refund but the result could not be recorded: '.$exception->getMessage());
+            throw new DomainException('The provider accepted this refund but the result could not be recorded. The refund is held as unresolved and must be reconciled; do not submit it again.');
+        }
+    }
+
+    /**
+     * Resolve a refund whose provider outcome was never persisted.
+     *
+     * The provider is queried by the stable refund reference that was sent with
+     * the original instruction. When the refund exists it is recorded as
+     * submitted (confirmation stays a separate, independent step). When the
+     * provider is reachable and has no such refund, the operator may explicitly
+     * confirm that (`confirm_absent`) to return it to `approved`. When the
+     * provider cannot be reached the refund stays unresolved.
+     */
+    public function reconcile(int $id, User $actor, bool $confirmAbsent = false): RefundRequest
+    {
+        $refund = RefundRequest::query()->with('payment')->findOrFail($id);
+        if ($refund->status !== RefundRequest::STATUS_SUBMITTING) {
+            throw new DomainException('Only a refund with an unconfirmed provider outcome can be reconciled.');
+        }
+        if (($refund->metadata['mode'] ?? null) !== 'provider') {
+            throw new DomainException('This refund was submitted manually and has no provider outcome to reconcile.');
+        }
+
+        $key = $refund->metadata['provider_idempotency_key'] ?? $this->providerIdempotencyKey($refund->refund_reference);
+        try {
+            $found = $this->gateway->findRefundByReference($refund->payment, $key);
+        } catch (\Throwable $exception) {
+            $this->recordProviderErrorQuietly($id, $actor, 'Reconciliation lookup failed: '.$exception->getMessage());
+            throw new DomainException('The provider could not be checked. The refund remains unresolved; do not resubmit it.');
+        }
+
+        if ($found !== null) {
+            $expected = PaymentAllocationService::toMinorUnits((string) $refund->amount);
+            if ((int) ($found['amount_minor'] ?? -1) !== $expected
+                || strtoupper((string) ($found['currency'] ?? '')) !== strtoupper((string) $refund->currency)) {
+                $this->event($refund, 'reconciliation_mismatch', RefundRequest::STATUS_SUBMITTING, RefundRequest::STATUS_SUBMITTING, $actor, 'A provider refund exists for this reference but its amount or currency does not match.', $found['provider_refund_reference'] ?? null, ['provider_outcome' => 'unknown']);
+                throw new DomainException('A provider refund with this reference exists but its amount or currency does not match. It remains unresolved for manual investigation.');
+            }
+
+            return $this->recordProviderAcceptance($id, $actor, $found, 'reconciled');
+        }
+
+        if (! $confirmAbsent) {
+            throw new DomainException('The provider has no refund for this reference. Once you have confirmed that with the provider, reconcile again with confirm_absent to return the refund to approved.');
+        }
+
+        return DB::transaction(function () use ($id, $actor): RefundRequest {
+            $refund = RefundRequest::query()->lockForUpdate()->with('payment')->findOrFail($id);
+            if ($refund->status !== RefundRequest::STATUS_SUBMITTING) return $refund;
+            $refund->forceFill([
+                'status' => RefundRequest::STATUS_APPROVED,
+                'submitted_at' => null,
+                'metadata' => array_merge((array) $refund->metadata, ['provider_outcome' => 'absent_confirmed']),
+            ])->save();
+            $this->event($refund, 'reconciled_absent', RefundRequest::STATUS_SUBMITTING, RefundRequest::STATUS_APPROVED, $actor, 'Provider confirmed no refund exists for this reference; the refund returned to approved.', null, ['provider_outcome' => 'absent_confirmed']);
+            $this->audit->log($actor, 'stage4c.refund.reconciled_absent', 'Reconciled refund '.$refund->refund_reference.' as not present at the provider.', $refund);
+            return $refund->fresh(['payment']);
+        }, 1);
     }
 
     public function confirm(int $id, User $actor, ?string $providerReference, ?string $evidence): RefundRequest
@@ -243,6 +342,9 @@ class RefundService
             $mode = $refund->metadata['mode'] ?? 'manual';
             $reference = $providerReference;
             if ($mode === 'provider' && $this->policy->providerRefundsEnabled()) {
+                if (! $refund->provider_refund_reference) {
+                    throw new DomainException('The provider refund reference is not recorded. Reconcile this refund before confirming it.');
+                }
                 $verification = $this->gateway->verifyRefund($refund->payment, (string) $refund->provider_refund_reference);
                 $expectedMinor = PaymentAllocationService::toMinorUnits((string) $refund->amount);
                 if (($verification['provider_status'] ?? null) !== 'processed'
@@ -309,6 +411,8 @@ class RefundService
             ->where('payment_transaction_id', $payment->id)
             ->whereIn('status', [
                 RefundRequest::STATUS_REQUESTED, RefundRequest::STATUS_APPROVED,
+                // An unresolved provider submission still reserves the funds.
+                RefundRequest::STATUS_SUBMITTING,
                 RefundRequest::STATUS_SUBMITTED, RefundRequest::STATUS_CONFIRMED,
             ])->sum('amount');
 
@@ -365,6 +469,8 @@ class RefundService
             'failed_at' => $refund->failed_at,
             'failure_reason' => $refund->failure_reason,
             'metadata' => $refund->metadata,
+            'provider_outcome' => $refund->metadata['provider_outcome'] ?? null,
+            'reconciliation_required' => $refund->status === RefundRequest::STATUS_SUBMITTING,
             'created_at' => $refund->created_at,
         ];
     }
@@ -376,11 +482,81 @@ class RefundService
             : ['type' => 'customer', 'id' => $payment->customer?->id, 'name' => $payment->customer?->name];
     }
 
-    private function recordProviderError(int $id, User $actor, string $message): void
+    /**
+     * Stable provider-side reference derived from the refund reference. It is
+     * sent as Paystack's refund `reference`, so a repeated instruction with the
+     * same value cannot create a second refund and the refund can be looked up
+     * again by that key.
+     */
+    public function providerIdempotencyKey(string $refundReference): string
+    {
+        return 'sdr'.substr(hash('sha256', 'stage4c:'.$refundReference), 0, 32);
+    }
+
+    /**
+     * Persist a provider acceptance (fresh submission or reconciliation). If
+     * this write fails, the refund stays `submitting` — never `approved`.
+     */
+    private function recordProviderAcceptance(int $id, User $actor, array $result, string $action): RefundRequest
+    {
+        return DB::transaction(function () use ($id, $actor, $result, $action): RefundRequest {
+            $refund = RefundRequest::query()->lockForUpdate()->with('payment')->findOrFail($id);
+            if ($refund->status !== RefundRequest::STATUS_SUBMITTING) return $refund;
+
+            $refund->forceFill([
+                'status' => RefundRequest::STATUS_SUBMITTED,
+                'provider_refund_reference' => $result['provider_refund_reference'] ?? null,
+                'metadata' => array_merge((array) $refund->metadata, [
+                    'mode' => 'provider',
+                    'provider_outcome' => 'accepted',
+                    'provider_status' => $result['provider_status'] ?? null,
+                ]),
+            ])->save();
+            $this->event($refund, $action, RefundRequest::STATUS_SUBMITTING, RefundRequest::STATUS_SUBMITTED, $actor, $action === 'reconciled' ? 'Provider refund found by reference; outcome recorded.' : null, $result['provider_refund_reference'] ?? null, ['mode' => 'provider', 'provider_status' => $result['provider_status'] ?? null]);
+            $this->audit->log($actor, 'stage4c.refund.'.$action, ucfirst($action).' refund '.$refund->refund_reference.' with the provider.', $refund, null, ['provider_refund_reference' => $result['provider_refund_reference'] ?? null]);
+
+            return $refund->fresh(['payment']);
+        }, 1);
+    }
+
+    /** A definitive provider refusal: safe to return to `approved`. */
+    private function markProviderRejected(int $id, User $actor, string $message): void
+    {
+        DB::transaction(function () use ($id, $actor, $message): void {
+            $refund = RefundRequest::query()->lockForUpdate()->findOrFail($id);
+            if ($refund->status !== RefundRequest::STATUS_SUBMITTING) return;
+            $refund->forceFill([
+                'status' => RefundRequest::STATUS_APPROVED,
+                'submitted_at' => null,
+                'metadata' => array_merge((array) $refund->metadata, ['provider_outcome' => 'rejected']),
+            ])->save();
+            $this->event($refund, 'provider_error', RefundRequest::STATUS_SUBMITTING, RefundRequest::STATUS_APPROVED, $actor, $message ?? 'Provider rejected the refund.', null, ['mode' => 'provider', 'provider_outcome' => 'rejected']);
+        }, 1);
+    }
+
+    /**
+     * Best-effort variant for a path that is already failing: the refund state
+     * (not the audit row) is what protects the money, so an event-write failure
+     * must not mask the original outcome.
+     */
+    private function recordProviderErrorQuietly(int $id, User $actor, string $message): void
+    {
+        try {
+            $this->recordProviderError($id, $actor, $message);
+        } catch (\Throwable) {
+            // The refund is already held in `submitting`; nothing else to do.
+        }
+    }
+
+    /**
+     * Record a provider problem without changing the outcome. For an unknown
+     * outcome the refund deliberately stays `submitting`.
+     */
+    private function recordProviderError(int $id, User $actor, string $message, string $outcome = 'unknown'): void
     {
         $refund = RefundRequest::query()->find($id);
         if (! $refund) return;
-        $this->event($refund, 'provider_error', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_APPROVED, $actor, $message, null, ['mode' => 'provider']);
+        $this->event($refund, 'provider_error', $refund->status, $refund->status, $actor, $message, null, ['mode' => 'provider', 'provider_outcome' => $outcome]);
     }
 
     private function event(RefundRequest $refund, string $action, ?string $from, ?string $to, User $actor, ?string $reason = null, ?string $providerReference = null, ?array $metadata = null): void

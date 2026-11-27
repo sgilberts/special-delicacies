@@ -207,14 +207,145 @@ class Stage4cCreditReversalTest extends TestCase
         $this->assertSame('100.00', PaymentAllocationService::formatMinorUnits($refunds->refundableMinor($payment->fresh())));
     }
 
-    private function creditedReceipt(string $amount): array
+    public function test_partial_reversal_releases_only_the_reversed_portion_of_receipt_funds(): void
     {
-        $payment = PaymentTransaction::create([
+        [$payment, $entry] = $this->creditedReceipt('100.00');
+        $allocations = app(PaymentAllocationService::class);
+        $refunds = app(RefundService::class);
+        $credit = app(CustomerCreditService::class);
+
+        $service = app(CustomerCreditReversalService::class);
+        $request = $service->initiate($entry->id, '40.00', 'rev-ref-0201', 'Partial return of unspent credit', $this->initiator);
+        $service->approve($request->id, $this->approver);
+
+        $this->assertSame('60.00', PaymentAllocationService::formatMinorUnits($credit->balanceMinor($this->customer, 'GHS')));
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits($refunds->refundableMinor($payment->fresh())));
+
+        // The original entry is untouched; only an appended reversal exists.
+        $this->assertSame('designation', $entry->fresh()->entry_type);
+        $this->assertSame('100.00', $entry->fresh()->amount);
+        $this->assertSame('40.00', CustomerCreditLedgerEntry::where('entry_type', 'reversal')->sole()->amount);
+    }
+
+    public function test_multiple_reversals_accumulate_and_cannot_over_reverse(): void
+    {
+        [$payment, $entry] = $this->creditedReceipt('100.00');
+        $allocations = app(PaymentAllocationService::class);
+        $service = app(CustomerCreditReversalService::class);
+
+        foreach ([['30.00', 'rev-ref-0202'], ['30.00', 'rev-ref-0203']] as [$amount, $reference]) {
+            $request = $service->initiate($entry->id, $amount, $reference, 'Sequential partial reversal', $this->initiator);
+            $service->approve($request->id, $this->approver);
+        }
+
+        $this->assertSame(2, CustomerCreditLedgerEntry::where('entry_type', 'reversal')->count());
+        $this->assertSame('60.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits($service->remainingReversibleMinor($entry->fresh())));
+
+        $this->expectException(DomainException::class);
+        $service->initiate($entry->id, '50.00', 'rev-ref-0204', 'Over reversal attempt', $this->initiator);
+    }
+
+    public function test_reversed_funds_cannot_remain_available_as_both_credit_and_receipt_funds(): void
+    {
+        [$payment, $entry] = $this->creditedReceipt('100.00');
+        $allocations = app(PaymentAllocationService::class);
+        $refunds = app(RefundService::class);
+        $credit = app(CustomerCreditService::class);
+
+        $service = app(CustomerCreditReversalService::class);
+        $request = $service->initiate($entry->id, '100.00', 'rev-ref-0205', 'Full return of unspent credit', $this->initiator);
+        $service->approve($request->id, $this->approver);
+
+        $creditBalance = PaymentAllocationService::formatMinorUnits($credit->balanceMinor($this->customer, 'GHS'));
+        $receiptFunds = PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id));
+        $refundable = PaymentAllocationService::formatMinorUnits($refunds->refundableMinor($payment->fresh()));
+
+        $this->assertSame('0.00', $creditBalance);
+        $this->assertSame('100.00', $receiptFunds);
+        $this->assertSame('100.00', $refundable);
+
+        // Once the released funds are allocated they are no longer refundable.
+        $invoice = $this->invoice('100.00', 'STAGE4C-REV-INV-3');
+        $allocations->allocate($payment->id, [['commercial_document_id' => $invoice->id, 'amount' => '100.00']], 'stage4c-rev-alloc-1', $this->initiator);
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($refunds->refundableMinor($payment->fresh())));
+    }
+
+    public function test_reversal_respects_existing_allocations(): void
+    {
+        $payment = $this->receipt('100.00');
+        $allocations = app(PaymentAllocationService::class);
+        $credit = app(CustomerCreditService::class);
+        $invoice = $this->invoice('40.00', 'STAGE4C-REV-INV-4');
+        $allocations->allocate($payment->id, [['commercial_document_id' => $invoice->id, 'amount' => '40.00']], 'stage4c-rev-alloc-2', $this->initiator);
+        $credit->classifyReceipt($payment->id, 'advance', 'stage4c-rev-intent-4', 'Advance for allocation test', $this->initiator);
+        $entry = $credit->designateCredit($payment->id, '60.00', 'stage4c-rev-credit-4', 'Designate the remainder', $this->initiator);
+
+        // 60 designated + 40 allocated = the whole receipt.
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+
+        $service = app(CustomerCreditReversalService::class);
+        $request = $service->initiate($entry->id, '60.00', 'rev-ref-0206', 'Return the designated part only', $this->initiator);
+        $service->approve($request->id, $this->approver);
+
+        $this->assertSame('60.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('60.00', PaymentAllocationService::formatMinorUnits(app(RefundService::class)->refundableMinor($payment->fresh())));
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits($allocations->paymentAllocatedMinorForPayment($payment->id)), 'The existing allocation is still respected.');
+    }
+
+    public function test_receipt_funds_stay_correct_after_application_and_a_later_reversal(): void
+    {
+        [$payment, $entry] = $this->creditedReceipt('100.00');
+        $allocations = app(PaymentAllocationService::class);
+        $credit = app(CustomerCreditService::class);
+        $invoice = $this->invoice('60.00', 'STAGE4C-REV-INV-5');
+
+        $credit->applyCredit($invoice->id, '60.00', 'stage4c-rev-apply-5', 'Consume part of the credit', $this->initiator);
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits($credit->balanceMinor($this->customer, 'GHS')));
+
+        $service = app(CustomerCreditReversalService::class);
+        $request = $service->initiate($entry->id, '40.00', 'rev-ref-0207', 'Return the unconsumed remainder', $this->initiator);
+        $service->approve($request->id, $this->approver);
+
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($credit->balanceMinor($this->customer, 'GHS')));
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits(app(RefundService::class)->refundableMinor($payment->fresh())));
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($allocations->invoiceOutstandingMinor($invoice->fresh())), 'The consumed 60 stays applied to the invoice.');
+    }
+
+    public function test_duplicate_reversal_reference_cannot_restore_funds_twice(): void
+    {
+        [$payment, $entry] = $this->creditedReceipt('100.00');
+        $allocations = app(PaymentAllocationService::class);
+        $service = app(CustomerCreditReversalService::class);
+
+        $first = $service->initiate($entry->id, '40.00', 'rev-ref-0208', 'Idempotent partial reversal', $this->initiator);
+        $replay = $service->initiate($entry->id, '40.00', 'rev-ref-0208', 'Idempotent partial reversal', $this->initiator);
+        $this->assertSame($first->id, $replay->id);
+
+        $service->approve($first->id, $this->approver);
+        $service->approve($replay->id, $this->approver);
+
+        $this->assertSame(1, CustomerCreditLedgerEntry::where('entry_type', 'reversal')->count());
+        $this->assertSame('40.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('60.00', PaymentAllocationService::formatMinorUnits($service->remainingReversibleMinor($entry->fresh())));
+    }
+
+    private function receipt(string $amount): PaymentTransaction
+    {
+        return PaymentTransaction::create([
             'order_id' => null, 'customer_id' => $this->customer->id, 'organisation_id' => null, 'payment_purpose' => 'invoice',
             'transaction_reference' => 'STAGE4C-PAY-'.substr(md5($amount.microtime()), 0, 8), 'payment_method' => 'cash',
             'amount' => $amount, 'currency' => 'GHS', 'status' => 'succeeded', 'verified_at' => now(),
             'received_at' => now(), 'reporting_date' => now()->toDateString(),
         ]);
+    }
+
+    private function creditedReceipt(string $amount): array
+    {
+        $payment = $this->receipt($amount);
         $credit = app(CustomerCreditService::class);
         $credit->classifyReceipt($payment->id, 'advance', 'stage4c-intent-'.substr(md5((string) $payment->id), 0, 8), 'Advance for reversal test', $this->initiator);
         $entry = $credit->designateCredit($payment->id, $amount, 'stage4c-credit-'.substr(md5((string) $payment->id), 0, 8), 'Credit for reversal test', $this->initiator);

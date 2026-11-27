@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Exceptions\ProviderRefundRejected;
+use App\Exceptions\ProviderRefundUnavailable;
 use App\Models\Order;
 use App\Models\PaymentGateway;
 use App\Models\PaymentTransaction;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -38,26 +41,51 @@ class GatewayPaymentService
     }
 
     /**
+     * Submit a refund to Paystack.
+     *
+     * `$idempotencyKey` is sent as Paystack's own refund `reference`, a stable
+     * value derived from the refund reference. Repeating the call with the same
+     * key cannot create a second refund, and the same key can be used to look
+     * the refund up again when the original response was lost.
+     *
      * @return array{provider:string, provider_refund_reference:?string, provider_status:?string, amount_minor:int, currency:?string, raw:array}
+     *
+     * @throws ProviderRefundRejected when the provider definitively refused the refund
+     * @throws ProviderRefundUnavailable when the provider's outcome is unknown
      */
-    public function initiateRefund(PaymentTransaction $payment, string $amount, string $refundReference): array
+    public function initiateRefund(PaymentTransaction $payment, string $amount, string $refundReference, string $idempotencyKey): array
     {
         $gateway = $this->refundGatewayFor($payment->provider);
-        if (! $gateway) throw new RuntimeException('Refund credentials are not configured for this payment provider.');
+        if (! $gateway) throw new ProviderRefundUnavailable(new RuntimeException('Refund credentials are not configured for this payment provider.'));
 
         $minor = PaymentAllocationService::toMinorUnits($amount);
-        $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
-            ->post('https://api.paystack.co/refund', [
-                'transaction' => $payment->provider_reference ?: $payment->transaction_reference,
-                'amount' => $minor,
-                'merchant_note' => 'Refund '.$refundReference,
-            ]);
+        try {
+            $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
+                ->post('https://api.paystack.co/refund', [
+                    'transaction' => $payment->provider_reference ?: $payment->transaction_reference,
+                    'amount' => $minor,
+                    'reference' => $idempotencyKey,
+                    'merchant_note' => 'Refund '.$refundReference,
+                ]);
+        } catch (ConnectionException $exception) {
+            // Timeout or connection loss: the provider may have accepted it.
+            throw ProviderRefundUnavailable::from($exception);
+        }
 
+        // 5xx and 409 (duplicate reference) leave the outcome unknown.
+        if ($response->serverError() || $response->status() === 409) {
+            throw ProviderRefundUnavailable::from(new RuntimeException('The payment provider did not confirm the refund request.'));
+        }
         if (! $response->successful() || ! data_get($response->json(), 'status')) {
-            throw new RuntimeException('The payment provider rejected the refund request.');
+            throw ProviderRefundRejected::from(new RuntimeException('The payment provider rejected the refund request.'));
         }
 
         $data = $response->json('data') ?? [];
+        if (isset($data['reference']) && (string) $data['reference'] !== $idempotencyKey) {
+            // A refund came back that is not the one we asked for: do not claim success.
+            throw ProviderRefundUnavailable::from(new RuntimeException('The provider returned a different refund reference.'));
+        }
+
         return [
             'provider' => 'paystack',
             'provider_refund_reference' => isset($data['id']) ? (string) $data['id'] : null,
@@ -66,6 +94,41 @@ class GatewayPaymentService
             'currency' => $data['currency'] ?? null,
             'raw' => $data,
         ];
+    }
+
+    /**
+     * Look a refund up by its stable reference so an unconfirmed submission can
+     * be reconciled without issuing a second refund.
+     *
+     * @return array{provider_refund_reference:?string, provider_status:?string, amount_minor:?int, currency:?string, raw:array}|null
+     */
+    public function findRefundByReference(PaymentTransaction $payment, string $idempotencyKey): ?array
+    {
+        $gateway = $this->refundGatewayFor($payment->provider);
+        if (! $gateway) throw new RuntimeException('Refund credentials are not configured for this payment provider.');
+
+        $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
+            ->get('https://api.paystack.co/refund', ['reference' => $idempotencyKey, 'perPage' => 50]);
+
+        if (! $response->successful() || ! data_get($response->json(), 'status')) {
+            throw new RuntimeException('The payment provider could not list refunds.');
+        }
+
+        $payload = $response->json('data') ?? [];
+        $rows = array_is_list($payload) ? $payload : [$payload];
+        foreach ($rows as $row) {
+            if (isset($row['reference']) && (string) $row['reference'] === $idempotencyKey) {
+                return [
+                    'provider_refund_reference' => isset($row['id']) ? (string) $row['id'] : null,
+                    'provider_status' => $row['status'] ?? null,
+                    'amount_minor' => isset($row['amount']) ? (int) $row['amount'] : null,
+                    'currency' => $row['currency'] ?? null,
+                    'raw' => $row,
+                ];
+            }
+        }
+
+        return null;
     }
 
     /**

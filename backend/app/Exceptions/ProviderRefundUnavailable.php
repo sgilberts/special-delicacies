@@ -6,16 +6,17 @@ use RuntimeException;
 use Throwable;
 
 /**
- * Raised when the payment provider cannot accept a refund instruction.
+ * Raised when the payment provider's refund outcome is unknown: a timeout, a
+ * connection failure, a 5xx response, or a duplicate-reference conflict.
  *
- * The refund is never marked submitted or confirmed: the surrounding
- * transaction rolls back, the failure is recorded as a `provider_error`
- * audit event, and the refund stays approved for a safe retry.
+ * The provider may or may not have accepted the refund, so the refund is NOT
+ * rolled back to `approved`. It is held in `submitting` (unresolved) and must
+ * be reconciled against the provider before any further submission.
  */
 class ProviderRefundUnavailable extends RuntimeException
 {
     public static function from(Throwable $exception): self
     {
-        return new self('The payment provider could not accept the refund instruction.', 0, $exception);
+        return new self('The payment provider did not confirm the refund outcome.', 0, $exception);
     }
 }

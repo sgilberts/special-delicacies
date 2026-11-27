@@ -376,6 +376,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
             Route::post('/{refund}/confirm', [RefundController::class, 'confirm'])
                 ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/reconcile', [RefundController::class, 'reconcile'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
             Route::post('/{refund}/fail', [RefundController::class, 'fail'])
                 ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
         });

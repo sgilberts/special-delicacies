@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useAuth } from "@/app/providers/useAuth";
+import { useConfirm, usePrompt } from "@/components/ui/ConfirmDialog";
 
 type Payer = { type: string; id: number; name: string };
 type EligibleInvoice = { id: number; document_number: string; payer: Payer; currency: string; total: string; remaining_creditable: string };
@@ -20,6 +21,8 @@ type Page<T> = { data: T[] };
 
 export default function AdminCreditNotesPage() {
   const { user } = useAuth();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
   const isSuperAdmin = user?.roles?.includes("super-admin") ?? false;
   const permissions = user?.permissions ?? [];
   const canView = isSuperAdmin || permissions.some(p => ["financials.credit_notes.view", "financials.credit_notes.create", "financials.credit_notes.approve"].includes(p));
@@ -57,9 +60,15 @@ export default function AdminCreditNotesPage() {
     } finally { setBusy(false); }
   }
 
-  const createNote = () => {
+  const createNote = async () => {
     if (!invoiceId) { setError("Select the invoice to credit."); return; }
-    if (!window.confirm(`Create a draft credit note for ${amount}? It will not affect balances until a different staff member issues it.`)) return;
+    const invoice = invoices.find(item => item.id === invoiceId);
+    const ok = await confirm({
+      title: "Create a draft credit note",
+      message: `Create a draft credit note for ${invoice?.currency ?? ""} ${amount} against invoice ${invoice?.document_number ?? ""}? Balances do not change until a different staff member issues it.`,
+      confirmLabel: "Create draft",
+    });
+    if (!ok) return;
     void run(async () => {
       await api.post("/admin/financials/credit-notes", {
         originating_document_id: invoiceId, amount, description: description || undefined, notes: notesText || undefined,
@@ -72,14 +81,32 @@ export default function AdminCreditNotesPage() {
     void run(async () => { const response = await api.get<{ data: CreditNoteDetail }>(`/admin/financials/credit-notes/${id}`); setDetail(response.data.data); }, "Credit note detail loaded.");
   };
 
-  const issue = (note: CreditNote) => {
-    if (!window.confirm(`Issue credit note ${note.document_number}? This creates customer credit and may apply it to the invoice.`)) return;
+  const issue = async (note: CreditNote) => {
+    const ok = await confirm({
+      title: "Issue credit note",
+      message: `Issue credit note ${note.document_number} for ${note.currency} ${note.total} to ${note.payer.name}? This creates customer credit and may apply it to invoice ${note.originating_document?.document_number ?? "—"}.`,
+      confirmLabel: "Issue credit note",
+    });
+    if (!ok) return;
     void run(async () => { await api.post(`/admin/financials/credit-notes/${note.id}/issue`); }, "Credit note issued.");
   };
 
-  const voidNote = (note: CreditNote) => {
-    const reason = window.prompt("Reason for voiding this credit note:"); if (!reason) return;
-    if (!window.confirm("Void this credit note? Unused credit will be reversed.")) return;
+  const voidNote = async (note: CreditNote) => {
+    const reason = await prompt({
+      title: "Void credit note",
+      message: `Record the reason for voiding ${note.document_number} (${note.currency} ${note.total}).`,
+      label: "Reason",
+      confirmLabel: "Continue",
+      tone: "danger",
+    });
+    if (!reason) return;
+    const ok = await confirm({
+      title: "Void credit note",
+      message: `Void ${note.document_number}? Any unused credit will be reversed and cannot be spent afterwards.`,
+      confirmLabel: "Void credit note",
+      tone: "danger",
+    });
+    if (!ok) return;
     void run(async () => { await api.post(`/admin/financials/credit-notes/${note.id}/void`, { reason }); }, "Credit note voided.");
   };
 
@@ -131,8 +158,8 @@ export default function AdminCreditNotesPage() {
           <td className="p-2 font-semibold">{note.status}{note.voided_at ? <small className="block font-normal text-[var(--color-text-secondary)]">voided {new Date(note.voided_at).toLocaleDateString()}</small> : null}</td>
           <td className="p-2"><div className="flex flex-wrap gap-1">
             <button type="button" onClick={() => openDetail(note.id)} className="min-h-9 rounded-lg border px-2 font-semibold" style={{ borderColor: "var(--color-border)" }}>View</button>
-            {canApprove && note.status === "draft" && <button type="button" disabled={busy} onClick={() => issue(note)} className="min-h-9 rounded-lg border px-2 font-semibold" style={{ borderColor: "var(--color-border)" }}>Issue</button>}
-            {canApprove && note.status === "issued" && <button type="button" disabled={busy} onClick={() => voidNote(note)} className="min-h-9 rounded-lg border px-2 font-semibold text-[var(--color-danger)]" style={{ borderColor: "var(--color-border)" }}>Void</button>}
+            {canApprove && note.status === "draft" && <button type="button" disabled={busy} onClick={() => void issue(note)} className="min-h-9 rounded-lg border px-2 font-semibold" style={{ borderColor: "var(--color-border)" }}>Issue</button>}
+            {canApprove && note.status === "issued" && <button type="button" disabled={busy} onClick={() => void voidNote(note)} className="min-h-9 rounded-lg border px-2 font-semibold text-[var(--color-danger)]" style={{ borderColor: "var(--color-border)" }}>Void</button>}
           </div></td>
         </tr>)}
         {notes.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-[var(--color-text-secondary)]">No credit notes recorded.</td></tr>}
