@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -53,6 +54,16 @@ return new class extends Migration
 
     public function down(): void
     {
+        // Re-narrowing the actor columns is only possible while every receipt
+        // still has a staff actor. Check BEFORE any DDL so a blocked rollback
+        // leaves the schema untouched instead of failing halfway through.
+        if (DB::table('payment_receipt_intents')->whereNull('actor_user_id')->exists()) {
+            throw new RuntimeException(
+                'Cannot roll back staff_deposit_records: payment_receipt_intents contains customer-initiated receipts '
+                .'with no staff actor, so actor_user_id cannot be made NOT NULL again. No schema change was applied.'
+            );
+        }
+
         Schema::table('payment_receipt_intents', function (Blueprint $table): void {
             $table->foreignId('actor_user_id')->nullable(false)->change();
             $table->unsignedBigInteger('actor_user_id_snapshot')->nullable(false)->change();

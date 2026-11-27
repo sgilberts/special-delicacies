@@ -18,6 +18,11 @@
 - [Stage 4C Design](STAGE-4C-REFUNDS-CREDIT-NOTES-AND-REVERSALS-DESIGN.md) — Historical design record (D1–D13, workflows and risks) preserved from discovery.
 - [Stage 4C Initial Report](STAGE-4C-INITIAL-REPORT.md) — Historical discovery report preserved from discovery.
 
+## Stage 4B + Stage 4C integration
+
+- [Stage 4B + 4C Integration Validation Report](STAGE-4BC-INTEGRATION-REPORT.md) — Integration branch, conflicts and resolutions, corrections F1–F8, migration inventory, per-stage and combined test results, MySQL 8.4 up/down evidence, cross-stage invariants, remaining defects.
+- [Stage 4B Outstanding Scope Reconciliation](STAGE-4B-OUTSTANDING-SCOPE-RECONCILIATION.md) — Stage 4B gaps, protected-database guard defect, duplicate-implementation and migration-rollback findings, and the conflicts anticipated with Stage 4C.
+
 ## Stage 4D — Financial reporting and reconciliation (design)
 
 - [Stage 4D Initial Discovery Report](STAGE-4D-INITIAL-DISCOVERY-REPORT.md) — Branch and PR state, Stage 4A/4B/4C presence, authoritative financial sources, existing reports, findings G1–G13, provider settlement capability, classification.

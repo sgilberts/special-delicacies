@@ -25,13 +25,17 @@ return new class extends Migration
             Permission::updateOrCreate(['slug' => $slug], compact('name', 'description'));
         }
 
-        // View permissions follow the existing read access for each area.
-        $this->grantToRolesWith('financials.refunds.view', 'financials.transactions.view');
-        $this->grantToRolesWith('financials.credit_notes.view', 'commercial_documents.view');
-        $this->grantToRolesWith('financials.credit_reversals.view', 'financials.customer_credit.view');
-
-        // Mutations are granted only to super-admin; the owner assigns them to
-        // finance roles deliberately after reviewing D1–D13.
+        // Grant only to super-admin, matching RoleAndPermissionSeeder exactly.
+        //
+        // The Stage 4C design (§12) originally proposed copying the three view
+        // permissions to every role holding the related read permission. The
+        // seeder is the durable authority — it runs on deploy and calls
+        // permissions()->sync(), which would silently remove those grants — and
+        // its `admin` role deliberately excludes all `financials.*` permissions.
+        // Copying them here would therefore widen access for `admin` until the
+        // next seed, and then narrow it again. Creating the permissions and
+        // granting them to super-admin is the only state both paths agree on;
+        // any wider grant is an explicit owner decision made in the UI.
         $ids = Permission::query()->whereIn('slug', array_column(self::PERMISSIONS, 1))->pluck('id');
         Role::query()->where('slug', 'super-admin')->get()
             ->each(fn (Role $role) => $role->permissions()->syncWithoutDetaching($ids->all()));
@@ -44,12 +48,4 @@ return new class extends Migration
         Permission::query()->whereIn('id', $ids)->delete();
     }
 
-    private function grantToRolesWith(string $viewSlug, string $existingSlug): void
-    {
-        $permissionId = Permission::query()->where('slug', $viewSlug)->value('id');
-        if (! $permissionId) return;
-
-        Role::query()->whereHas('permissions', fn ($query) => $query->where('slug', $existingSlug))
-            ->get()->each(fn (Role $role) => $role->permissions()->syncWithoutDetaching([$permissionId]));
-    }
 };
