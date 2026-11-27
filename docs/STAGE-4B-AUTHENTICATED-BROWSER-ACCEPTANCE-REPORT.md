@@ -260,3 +260,75 @@ Core Stage 4B workflows and controls passed: email-or-phone customer sign-in, ba
 The classification is not **READY** because two dependencies still lack end-to-end evidence and the acceptance fixes are not yet part of the reviewed PR head: (a) no SMS provider, so phone verification delivery is unavailable; (b) no gateway credentials, so a real online deposit + provider return/webhook was not exercised in the browser; (c) the new identity/gating changes must be pushed and re-reviewed on PR #1; (d) MySQL evidence is 8.4.13 rather than 8.4.11.
 
 **PR #1 was not merged, not closed, and not modified. Stage 4C remains deferred. Awaiting the owner's explicit decision.**
+
+---
+
+## 14. Environment configuration — local mail capture (Mailpit) and the `/mailpit` preview proxy
+
+_Recorded after the acceptance exercise above. This documents an environment configuration change only: the browser results in §A–§H, the test counts in §F and the financial findings in §D are unchanged, and the classification in §13 is not upgraded._
+
+### Why the local Mailpit configuration was required
+
+`AccountSecurityService::deliverEmail()` refuses to deliver verification or password-recovery email when the default mail driver is `log` (or `array` outside the `testing` environment) and raises `OtpDeliveryUnavailable`. The sandbox stack therefore had no working email channel: the email code described in §B3 could not be requested through the application, and the two-contact verification gate could not be exercised in the preview at all.
+
+The correction is environment-only. A local capture service (Mailpit) receives every message the application sends in the preview, so codes and recovery links can be read without exposing them in the application and without any real message leaving the sandbox.
+
+### Environment configuration repository
+
+The change does not belong in the application repository: it is service, proxy and sandbox configuration, and it is shared by every code branch of the app.
+
+| Item | Value |
+| --- | --- |
+| Repository | Base44 environment configuration Git (separate from `sgilberts/special-delicacies`) |
+| Revision | `6ce847e5dad10c34c4f65cf128c66ae1b71595ba` — "Update environment configuration", Fri 27 Nov 2026 12:07:03 +0000 |
+| Previous revision | `f61dbad99a32f881ae303a8d81e27127ed148940` |
+| Files changed | `docker-compose.base44.yml`, `preview-proxy.conf` (new), `SETUP.md` |
+| Application source files changed | none |
+
+### Mailpit service configuration
+
+- Image `axllent/mailpit:v1.34`, `restart: on-failure`, in-memory store (`MP_MAX_MESSAGES=500`) — no mail database, mail contents or logs are stored in the repository or configuration Git.
+- `MP_WEBROOT=/mailpit/` so the UI and its API are served under the preview path; `MP_ALLOWED_HOSTS=mailpit,mailpit:8025` pins the proxied `Host` header (DNS-rebinding mitigation).
+- Health probe `["CMD", "/mailpit", "readyz"]`.
+- The application's preview mail settings are `MAIL_MAILER=smtp`, `MAIL_HOST=mailpit`, `MAIL_PORT=1025`, `MAIL_FROM_ADDRESS=no-reply@specialdelicacies.test`. This is a preview-only sink: no production SMTP host or credential exists in configuration Git, and deployed environments keep their own `MAIL_*` values.
+
+### Preview proxy configuration for `/mailpit/`
+
+A small nginx service (`web`) now owns the single public entry point (host port 3000); the Vite dev server moved to an internal port. `preview-proxy.conf` defines:
+
+- `/` → `http://frontend:5173` with WebSocket upgrade (Vite HMR) and the original `Host` preserved, so the app keeps running its own `vite.config.ts` unchanged.
+- `/mailpit` → `301 /mailpit/`, with `absolute_redirect off` so the redirect survives the TLS preview proxy.
+- `/mailpit/` → `http://mailpit:8025` with `Host: mailpit:8025` and WebSocket upgrade for live updates.
+- Upstreams are resolved per request through Docker's embedded DNS (`127.0.0.11`).
+
+### Internal-only ports and exposure restrictions
+
+- Mailpit publishes **no host port**. `8025` (UI/API) and `1025` (SMTP) are reachable only from other compose services.
+- From outside the sandbox, host ports 8025 and 1025 are closed; the capture UI is reachable only at `https://3000-<preview host>/mailpit/`, i.e. through the same preview origin as the application.
+- No SMTP credential, API key, token or password was added anywhere; the service accepts mail from the compose network only.
+
+### Local sandbox validation (this exercise)
+
+Performed in the sandbox against the running stack, before the configuration was published:
+
+| Check | Result |
+| --- | --- |
+| All services healthy (`web`, `frontend`, `backend`, `queue`, `reverb`, `mailpit`, `db`) | pass |
+| `GET /` through the proxy | `200`; public site rendered, no console errors, no horizontal overflow |
+| `GET /mailpit/` | `200`; assets loaded from `/mailpit/dist/…`, UI rendered |
+| Real send through the application (`Mail::raw()` from the backend container) | 1 message captured in Mailpit; the test message was then deleted (inbox back to 0) |
+| `GET /api/v1/health` | `{"success":true,…}` |
+| Backend environment | `MAIL_MAILER=smtp`, `MAIL_HOST=mailpit`, `MAIL_PORT=1025` |
+| Host ports 8025 / 1025 | closed (no published port) |
+
+### Shared environment publication and validation status
+
+- **Local validation (above)** — the sandbox stack running the new configuration.
+- **Shared-environment validation** — the platform validated the revision in a separate sandbox before publishing; the shared environment advanced from `f61dbad` to `6ce847e` with no recorded validation failure, and this app's stack has run healthily from it since. That validation was a boot and health check of the environment configuration, not a re-run of the 423-test suite or of this browser acceptance exercise.
+
+### Remaining limitations
+
+1. **Vite HMR through the new nginx proxy was not separately exercised** — page load, dev assets and the app's API calls were verified; hot-module reload over the proxied WebSocket was not driven.
+2. **Mailpit is a preview-only sink** — it captures mail; it does not prove delivery to a real mailbox. Production SMTP remains unverified here (see §H).
+3. **SMS remains unavailable** — Mailpit resolves the email channel only; phone verification delivery is still outstanding (§H.1).
+4. This section documents environment configuration. It adds no evidence for the payment-gateway or super-admin gaps in §H, and it does not change the classification in §13.
