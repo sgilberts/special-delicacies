@@ -155,9 +155,15 @@ class CustomerCreditService
     {
         $base = CustomerCreditLedgerEntry::query()->where('currency', $currency);
         $payer instanceof Customer ? $base->where('customer_id', $payer->id)->whereNull('organisation_id') : $base->where('organisation_id', $payer->id)->whereNull('customer_id');
-        $credit = (clone $base)->where('entry_type', CustomerCreditLedgerEntry::TYPE_DESIGNATION)->sum('amount');
-        $used = (clone $base)->where('entry_type', CustomerCreditLedgerEntry::TYPE_APPLICATION)->sum('amount');
+        $credit = (clone $base)->whereIn('entry_type', CustomerCreditLedgerEntry::CREDIT_TYPES)->sum('amount');
+        $used = (clone $base)->whereIn('entry_type', CustomerCreditLedgerEntry::DEBIT_TYPES)->sum('amount');
         return PaymentAllocationService::toMinorUnits((string) ($credit ?: '0')) - PaymentAllocationService::toMinorUnits((string) ($used ?: '0'));
+    }
+
+    /** Expose the canonical derived balance to other Stage 4C services. */
+    public function currentBalanceMinor(Customer|Organisation $payer, string $currency, bool $forUpdate = false): int
+    {
+        return $this->creditBalanceMinor($payer, $currency, $forUpdate);
     }
 
     public function customerCreditView(Customer $customer, array $organisationIds = []): array
@@ -177,7 +183,7 @@ class CustomerCreditService
 
     public function staffLedger(array $filters = [])
     {
-        $query = CustomerCreditLedgerEntry::query()->with(['customer:id,name,email,phone', 'organisation:id,name,reference', 'sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'actor:id,name'])
+        $query = CustomerCreditLedgerEntry::query()->with(['customer:id,name,email,phone', 'organisation:id,name,reference', 'sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'reversesEntry:id,operation_reference', 'actor:id,name'])
             ->latest('created_at')->latest('id');
         if (isset($filters['customer_id'])) $query->where('customer_id', $filters['customer_id']);
         if (isset($filters['organisation_id'])) $query->where('organisation_id', $filters['organisation_id']);
@@ -206,7 +212,7 @@ class CustomerCreditService
 
     private function ledgerQuery(?Customer $customer, ?Organisation $organisation)
     {
-        $query = CustomerCreditLedgerEntry::query()->with(['sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'actor:id,name'])->latest('created_at')->latest('id');
+        $query = CustomerCreditLedgerEntry::query()->with(['sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'reversesEntry:id,operation_reference', 'actor:id,name'])->latest('created_at')->latest('id');
         $customer ? $query->where('customer_id', $customer->id)->whereNull('organisation_id') : $query->where('organisation_id', $organisation?->id)->whereNull('customer_id');
         return $query;
     }
@@ -235,6 +241,10 @@ class CustomerCreditService
             'source_reference' => $entry->sourcePayment?->transaction_reference,
             'invoice_number' => $entry->commercialDocument?->document_number,
             'actor' => $entry->actor_name_snapshot ?: $entry->actor?->name ?: 'Unknown / unavailable',
+            'reverses_entry_id' => $entry->reverses_entry_id,
+            'reversal_of_reference' => $entry->reversesEntry?->operation_reference,
+            'authorized_by' => $entry->authorized_by_name_snapshot ?: $entry->authorizedBy?->name,
+            'authorized_at' => $entry->authorized_at,
             'credit_balance_before' => $entry->credit_balance_before, 'credit_balance_after' => $entry->credit_balance_after,
         ];
     }
@@ -294,14 +304,14 @@ class CustomerCreditService
             $applications = 0;
             foreach ($query->orderBy('id')->lockForUpdate()->get(['entry_type', 'amount']) as $entry) {
                 $minor = PaymentAllocationService::toMinorUnits((string) $entry->amount);
-                $entry->entry_type === CustomerCreditLedgerEntry::TYPE_DESIGNATION
+                in_array($entry->entry_type, CustomerCreditLedgerEntry::CREDIT_TYPES, true)
                     ? $credits += $minor
                     : $applications += $minor;
             }
             return $credits - $applications;
         }
-        $credits = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_DESIGNATION)->sum('amount');
-        $applications = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_APPLICATION)->sum('amount');
+        $credits = (clone $query)->whereIn('entry_type', CustomerCreditLedgerEntry::CREDIT_TYPES)->sum('amount');
+        $applications = (clone $query)->whereIn('entry_type', CustomerCreditLedgerEntry::DEBIT_TYPES)->sum('amount');
         return PaymentAllocationService::toMinorUnits((string) ($credits ?: '0')) - PaymentAllocationService::toMinorUnits((string) ($applications ?: '0'));
     }
 
