@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Archive, Edit2, RefreshCw, RotateCcw, ShieldAlert, WalletCards, X } from "lucide-react";
 import api from "@/lib/api";
 import type { CustomerActivityEvent, CustomerDetail, CustomerFinancials } from "@/types/customers";
@@ -18,6 +18,8 @@ import { sectionFailureState, showsEmptyState, type SectionLoadState } from "@/l
 
 interface CustomerDetailModalProps {
   customerId: number;
+  /** Bumped by the page when a real-time event touches this customer. */
+  refreshToken?: number;
   capabilities: CustomerCapabilities;
   onClose: () => void;
   onEdit: (customer: CustomerDetail) => void;
@@ -29,6 +31,7 @@ type ProfileState = "loading" | "ready" | "error";
 
 export default function CustomerDetailModal({
   customerId,
+  refreshToken,
   capabilities,
   onClose,
   onEdit,
@@ -41,8 +44,8 @@ export default function CustomerDetailModal({
   const [financialState, setFinancialState] = useState<SectionLoadState>("loading");
   const [financials, setFinancials] = useState<CustomerFinancials | null>(null);
 
-  const loadProfile = useCallback(async () => {
-    setProfileState("loading");
+  const loadProfile = useCallback(async (silent = false) => {
+    if (!silent) setProfileState("loading");
     try {
       const response = await api.get<{ data: { customer: CustomerDetail; activity: CustomerActivityEvent[] } }>(
         `/admin/customers/${customerId}`,
@@ -51,7 +54,8 @@ export default function CustomerDetailModal({
       setActivity(response.data.data.activity ?? []);
       setProfileState("ready");
     } catch {
-      setProfileState("error");
+      // A failed background refresh keeps the last good snapshot on screen.
+      if (!silent) setProfileState("error");
     }
   }, [customerId]);
 
@@ -81,6 +85,19 @@ export default function CustomerDetailModal({
     }
     void loadFinancials();
   }, [capabilities, loadFinancials]);
+
+  // A real-time event (or a change made elsewhere) refetches this modal, so a
+  // reopened or open customer never shows a stale snapshot.
+  const firstRefresh = useRef(true);
+  useEffect(() => {
+    if (refreshToken === undefined) return;
+    if (firstRefresh.current) {
+      firstRefresh.current = false;
+      return;
+    }
+    void loadProfile(true);
+    if (shouldLoadFinancials(capabilities, true)) void loadFinancials();
+  }, [refreshToken, capabilities, loadProfile, loadFinancials]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

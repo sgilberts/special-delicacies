@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test:rbac": "node --experimental-strip-types --test tests/rbac-access.test.mjs",
     "test:customers": "node --experimental-strip-types --test tests/customer-management.test.mjs",
+    "test:organisations": "node --experimental-strip-types --test tests/organisation-management.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

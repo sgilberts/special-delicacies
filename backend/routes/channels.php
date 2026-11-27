@@ -111,6 +111,19 @@ Broadcast::channel('financials', function (User $user) {
     return $user->is_active && $user->hasPermission('financials.view');
 });
 
+// Customer Support: customer-record updates for administrators who may view
+// customers. The payload carries identity and lifecycle status only; financial
+// figures stay behind customers.view_financials and are refetched over HTTP.
+Broadcast::channel('customers', function (User $user) {
+    return $user->is_active && $user->hasPermission('customers.view');
+});
+
+// Customer Support: organisation and membership updates for administrators who
+// may view organisations.
+Broadcast::channel('organisations', function (User $user) {
+    return $user->is_active && $user->hasPermission('organisations.view');
+});
+
 Broadcast::channel('orders', function (User $user) {
     return $user->is_active && $user->hasPermission('orders.view');
 });

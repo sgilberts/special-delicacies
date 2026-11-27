@@ -24,6 +24,7 @@ import {
   WalletCards,
   MessageCircle,
   Contact,
+  Building2,
   FileText,
   RotateCcw,
   FileMinus,
@@ -160,6 +161,9 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   }
   if (hasAnyPermission(userPermissions, ["customers.view"], user?.roles)) {
     customerSupportItems.push({ label: "Customers", to: "/admin/customers", icon: Contact });
+  }
+  if (hasAnyPermission(userPermissions, ["organisations.view"], user?.roles)) {
+    customerSupportItems.push({ label: "Organisations", to: "/admin/organisations", icon: Building2 });
   }
   if (customerSupportItems.length > 0) {
     sections.push({ heading: "Customer Support", items: customerSupportItems });

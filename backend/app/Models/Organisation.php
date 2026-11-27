@@ -13,6 +13,20 @@ class Organisation extends Model
     public const STATUS_ACTIVE = 'active';
     public const STATUS_SUSPENDED = 'suspended';
 
+    protected function casts(): array
+    {
+        return [
+            // Not fillable: only the archive/restore lifecycle writes this.
+            'archived_at' => 'datetime',
+        ];
+    }
+
+    /** An archived organisation keeps every membership and document record. */
+    public function isArchived(): bool
+    {
+        return $this->archived_at !== null;
+    }
+
     public function owner(): BelongsTo
     {
         return $this->belongsTo(Customer::class, 'owner_customer_id');

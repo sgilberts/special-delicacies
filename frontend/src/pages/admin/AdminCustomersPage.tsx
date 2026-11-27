@@ -13,6 +13,8 @@ import {
 import api from "@/lib/api";
 import { useAuth } from "@/app/providers/useAuth";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
+import { usePrivateChannel } from "@/hooks/usePrivateChannel";
+import type { CustomerChangedPayload } from "@/types/organisations";
 import CustomerDetailModal from "@/components/admin/customers/CustomerDetailModal";
 import CustomerFormModal, { type EditableCustomer } from "@/components/admin/customers/CustomerFormModal";
 import type {
@@ -64,7 +66,11 @@ export default function AdminCustomersPage() {
   const [formState, setFormState] = useState<{ mode: "create" | "edit"; customer: EditableCustomer | null } | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detailKey, setDetailKey] = useState(0);
+  const [detailToken, setDetailToken] = useState(0);
   const requestId = useRef(0);
+  const detailIdRef = useRef<number | null>(null);
+  detailIdRef.current = detailId;
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     document.title = "Customers | Special Delicacies Admin";
@@ -80,9 +86,9 @@ export default function AdminCustomersPage() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options: { silent?: boolean } = {}) => {
     const id = ++requestId.current;
-    setLoading(true);
+    if (!options.silent) setLoading(true);
     setError("");
     try {
       const response = await api.get<CustomerListResponse>("/admin/customers", {
@@ -109,6 +115,49 @@ export default function AdminCustomersPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * A real-time event refetches the authoritative listing instead of patching
+   * rows by hand, so search, filters, counts and pagination can never drift.
+   * An open detail modal for the changed customer is asked to refetch too.
+   */
+  const scheduleRefresh = useCallback((customerId?: number) => {
+    if (customerId !== undefined && detailIdRef.current === customerId) {
+      setDetailToken((token) => token + 1);
+    }
+
+    if (refreshTimer.current !== null) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      void load({ silent: true });
+    }, 300);
+  }, [load]);
+
+  useEffect(() => () => {
+    if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+  }, []);
+
+  const { state: connectionState } = usePrivateChannel({
+    channel: "customers",
+    enabled: capabilities.canView,
+    events: {
+      ".customer.changed": (payload) => {
+        const event = payload as unknown as CustomerChangedPayload;
+        scheduleRefresh(event.customer?.id);
+      },
+    },
+    onReconnect: () => scheduleRefresh(),
+  });
+
+  // Slow fallback refresh while the socket is unavailable: at most one request
+  // every 30 seconds, and only while the page is visible.
+  useEffect(() => {
+    if (connectionState === "connected") return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void load({ silent: true });
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [connectionState, load]);
 
   const changeFilter = <K extends keyof CustomerFilters>(key: K, value: CustomerFilters[K]) => {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -199,15 +248,30 @@ export default function AdminCustomersPage() {
           </p>
         </div>
 
-        {capabilities.canCreate && (
-          <button
-            type="button"
-            onClick={() => setFormState({ mode: "create", customer: null })}
-            className="btn-accent px-4 py-2 text-sm font-semibold inline-flex items-center gap-2 self-start"
+        <div className="flex items-center gap-2 self-start">
+          <span
+            role="status"
+            title={connectionState === "connected" ? "Live updates are connected" : "Live updates are reconnecting; the list refreshes every 30 seconds"}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+              connectionState === "connected"
+                ? "border-emerald-300 text-emerald-800 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-200 dark:bg-emerald-950/40"
+                : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
+            }`}
           >
-            <UserPlus size={16} /> Add Customer
-          </button>
-        )}
+            <span className={`h-1.5 w-1.5 rounded-full ${connectionState === "connected" ? "bg-emerald-500" : "bg-amber-500"}`} />
+            {connectionState === "connected" ? "Live" : connectionState === "connecting" ? "Connecting" : "Offline"}
+          </span>
+
+          {capabilities.canCreate && (
+            <button
+              type="button"
+              onClick={() => setFormState({ mode: "create", customer: null })}
+              className="btn-accent px-4 py-2 text-sm font-semibold inline-flex items-center gap-2"
+            >
+              <UserPlus size={16} /> Add Customer
+            </button>
+          )}
+        </div>
       </div>
 
       {message && (
@@ -524,6 +588,7 @@ export default function AdminCustomersPage() {
         <CustomerDetailModal
           key={`${detailId}:${detailKey}`}
           customerId={detailId}
+          refreshToken={detailToken}
           capabilities={capabilities}
           onClose={() => setDetailId(null)}
           onEdit={(customer) => {
