@@ -18,6 +18,17 @@
 - [Stage 4C Design](STAGE-4C-REFUNDS-CREDIT-NOTES-AND-REVERSALS-DESIGN.md) — Historical design record (D1–D13, workflows and risks) preserved from discovery.
 - [Stage 4C Initial Report](STAGE-4C-INITIAL-REPORT.md) — Historical discovery report preserved from discovery.
 
+## Stage 4D — Financial reporting and reconciliation (design)
+
+- [Stage 4D Initial Discovery Report](STAGE-4D-INITIAL-DISCOVERY-REPORT.md) — Branch and PR state, Stage 4A/4B/4C presence, authoritative financial sources, existing reports, findings G1–G13, provider settlement capability, classification.
+- [Stage 4D Design](STAGE-4D-FINANCIAL-REPORTING-AND-RECONCILIATION-DESIGN.md) — Modules A–G, financial position identities, API surface, additive schema, aggregation rules, performance plan, risks.
+- [Stage 4D Financial Metrics Register](STAGE-4D-FINANCIAL-METRICS-REGISTER.md) — Every metric with formula, source, inclusion/exclusion, currency treatment and date basis.
+- [Stage 4D Permissions Matrix](STAGE-4D-PERMISSIONS-MATRIX.md) — Existing financial permissions, proposed reporting permissions, role matrix, route enforcement.
+- [Stage 4D Stage 4C Dependency Matrix](STAGE-4D-STAGE-4C-DEPENDENCY-MATRIX.md) — Which reports depend on which Stage 4C artifacts, integration contracts, missing-dependency behaviour.
+- [Stage 4D Implementation Breakdown](STAGE-4D-IMPLEMENTATION-BREAKDOWN.md) — Phases 4D-0…4D-8 with deliverables, exit criteria and dependency graph.
+- [Stage 4D Testing and Acceptance Strategy](STAGE-4D-TESTING-AND-ACCEPTANCE-STRATEGY.md) — Invariants, per-module acceptance, permissions, exports, performance, responsive acceptance.
+- [Stage 4D Owner Decision Register](STAGE-4D-OWNER-DECISION-REGISTER.md) — D1–D14 with options, recommendations, blocking status and approval record.
+
 ## Historical phase references
 
 Files named `PHASE-*.md` preserve decisions and implementation details from their original development phase. Some phase statements predate later updates. Use the current operating documents and `php artisan route:list --path=api` as the source of truth for the present system behavior.
