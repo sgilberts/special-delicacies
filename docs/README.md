@@ -17,3 +17,5 @@
 ## Historical phase references
 
 Files named `PHASE-*.md` preserve decisions and implementation details from their original development phase. Some phase statements predate later updates. Use the current operating documents and `php artisan route:list --path=api` as the source of truth for the present system behavior.
+
+- [Stage 4B Deposits and Customer Credit Acceptance Report](STAGE-4B-DEPOSITS-AND-CREDIT-ACCEPTANCE-REPORT.md) — Delivered deposit workflows, credit ledger invariants, verification results, and deferred items.
