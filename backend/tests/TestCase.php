@@ -4,14 +4,60 @@ namespace Tests;
 
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use RuntimeException;
+use Tests\Support\TestDatabaseGuard;
 
 abstract class TestCase extends BaseTestCase
 {
     /**
-     * Fail fast before any destructive test setup (RefreshDatabase, migrations
-     * or seeds) can touch a development or protected database. phpunit.xml
-     * already forces an in-memory SQLite connection; this guard also protects
-     * an explicit MySQL test run.
+     * Force the isolated test environment before the framework boots, then
+     * refuse to continue unless the resolved database is disposable.
+     *
+     * PHPUnit does not override variables that already exist in the process
+     * environment, so a container that exports DB_CONNECTION=mysql could
+     * otherwise let RefreshDatabase reset the development database. An opt-in
+     * MySQL compatibility run is accepted only for a disposable
+     * `special_delicacies_*_test` schema that is not one of the protected
+     * databases.
+     */
+    public function createApplication()
+    {
+        $mysqlTestDatabase = (string) (getenv('BASE44_MYSQL_TEST_DATABASE') ?: '');
+        $forced = [
+            'APP_ENV' => 'testing',
+            'DB_CONNECTION' => 'sqlite',
+            'DB_DATABASE' => ':memory:',
+            'DB_URL' => '',
+            'BROADCAST_CONNECTION' => 'null',
+            'MAIL_MAILER' => 'array',
+            'QUEUE_CONNECTION' => 'sync',
+            'CACHE_STORE' => 'array',
+            'SESSION_DRIVER' => 'array',
+        ];
+
+        if ($mysqlTestDatabase !== '') {
+            if (! TestDatabaseGuard::isDisposableMysqlDatabase($mysqlTestDatabase)) {
+                throw new RuntimeException("Refusing MySQL test run against non-disposable database [{$mysqlTestDatabase}].");
+            }
+            $forced['DB_CONNECTION'] = 'mysql';
+            $forced['DB_DATABASE'] = $mysqlTestDatabase;
+        }
+
+        foreach ($forced as $key => $value) {
+            $_ENV[$key] = $value;
+            $_SERVER[$key] = $value;
+            putenv("{$key}={$value}");
+        }
+
+        $app = parent::createApplication();
+
+        $this->assertSafeTestDatabase();
+
+        return $app;
+    }
+
+    /**
+     * Second guard immediately before any destructive trait setup
+     * (RefreshDatabase, migrations or seeds) can run.
      */
     protected function setUpTraits()
     {
@@ -22,24 +68,9 @@ abstract class TestCase extends BaseTestCase
 
     private function assertSafeTestDatabase(): void
     {
-        if (! $this->app->environment('testing')) {
-            throw new RuntimeException('Refusing to run tests outside the testing environment.');
-        }
-
         $connection = (string) config('database.default');
-        $database = (string) config("database.connections.{$connection}.database");
+        $database = config("database.connections.{$connection}.database");
 
-        if ($connection === 'sqlite') {
-            if ($database !== ':memory:' && ! str_ends_with($database, '_test.sqlite')) {
-                throw new RuntimeException("Refusing to run destructive tests against SQLite database '{$database}'.");
-            }
-
-            return;
-        }
-
-        $protected = ['special_delicacies', 'special_delicacies_db'];
-        if (! str_ends_with($database, '_test') || in_array(strtolower($database), $protected, true)) {
-            throw new RuntimeException("Refusing to run destructive tests against non-disposable database '{$database}'.");
-        }
+        TestDatabaseGuard::assertSafe($connection, is_string($database) ? $database : null);
     }
 }

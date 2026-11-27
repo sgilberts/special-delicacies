@@ -20,3 +20,13 @@ Files named `PHASE-*.md` preserve decisions and implementation details from thei
 
 - [Stage 4B Deposits and Customer Credit Acceptance Report](STAGE-4B-DEPOSITS-AND-CREDIT-ACCEPTANCE-REPORT.md) — Delivered deposit workflows, credit ledger invariants, verification results, and deferred items.
 - [Stage 4B Authenticated Browser Acceptance Report](STAGE-4B-AUTHENTICATED-BROWSER-ACCEPTANCE-REPORT.md) — Email-or-phone customer login, both-contact verification gate, authenticated browser acceptance, PR #1 diff review, and outstanding dependencies.
+
+## Stage 4B closure remediation (2026-11-27)
+
+- [Stage 4B Outstanding Scope Reconciliation](STAGE-4B-OUTSTANDING-SCOPE-RECONCILIATION.md) — Two-tranche status, outstanding-item closure, and external production dependencies.
+- [Stage 4B Independent Security Review](STAGE-4B-INDEPENDENT-SECURITY-REVIEW.md) — Identity, account gating, authorization boundaries, and financial findings (no Critical/High).
+- [Stage 4B Database Guard Remediation](STAGE-4B-DATABASE-GUARD-REMEDIATION.md) — Merge-blocking protected-database guard fix, regression tests, and live refusal evidence.
+- [Stage 4B MySQL 8.4.11 Verification](STAGE-4B-MYSQL-8.4.11-VERIFICATION.md) — Isolated MySQL 8.4.11 run: migrations, deposits, credit, identity, guard, and FK results.
+- [Stage 4B Browser Acceptance Report](STAGE-4B-BROWSER-ACCEPTANCE-REPORT.md) — Super-admin, independent verifier, invoice allocation, denial, and HMR evidence.
+- [Stage 4B PR Overlap and Integration Report](STAGE-4B-PR-OVERLAP-AND-INTEGRATION-REPORT.md) — PR #1 / PR #2 overlap analysis and safe integration strategy.
+- [Stage 4B Final Closure Report](STAGE-4B-FINAL-CLOSURE-REPORT.md) — Final classification, conditions, test totals, and recommended next action.
