@@ -19,6 +19,21 @@ class CustomerCreditLedgerEntry extends Model
 
     public $timestamps = false;
 
+    /**
+     * The customer credit ledger is append-only: historical entries must never
+     * be rewritten or removed. Corrections belong in compensating entries, so
+     * any attempt to mutate or delete an entry fails loudly.
+     */
+    protected static function booted(): void
+    {
+        static::updating(function (): void {
+            throw new \DomainException('Customer credit ledger entries are immutable.');
+        });
+        static::deleting(function (): void {
+            throw new \DomainException('Customer credit ledger entries cannot be deleted.');
+        });
+    }
+
     protected function casts(): array
     {
         return [

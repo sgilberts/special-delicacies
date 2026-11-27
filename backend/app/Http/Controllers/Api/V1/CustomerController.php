@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use App\Services\ApiTokenSession;
+use App\Services\GhanaPhoneNumber;
 use Symfony\Component\HttpFoundation\Response;
 
 class CustomerController extends Controller
@@ -106,7 +107,7 @@ class CustomerController extends Controller
         if (array_key_exists('email', $values) && mb_strtolower(trim((string) $values['email'])) !== mb_strtolower((string) $customer->email)) {
             $customer->email_verified_at = null;
         }
-        if (array_key_exists('phone', $values) && trim((string) $values['phone']) !== trim((string) $customer->phone)) {
+        if (array_key_exists('phone', $values) && ! GhanaPhoneNumber::sameNumber((string) $values['phone'], (string) $customer->phone)) {
             $customer->phone_verified_at = null;
         }
         foreach (['name', 'phone', 'email'] as $field) {
