@@ -9,6 +9,7 @@ use App\Models\ChatAgentPresence;
 use App\Services\ApiTokenSession;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -163,6 +164,15 @@ class AuthController extends Controller
 
         if ($user && $user->currentAccessToken()) {
             $user->currentAccessToken()->delete();
+        }
+
+        // A stateful Sanctum request is authenticated by the web session rather
+        // than a personal access token. Invalidate that session too, otherwise a
+        // remembered or stateful login survives logout.
+        if ($request->hasSession()) {
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
         }
 
         $response = response()->json([

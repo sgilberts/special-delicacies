@@ -8,6 +8,7 @@ use App\Models\CustomerAuditLog;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -167,6 +168,15 @@ class CustomerController extends Controller
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()?->delete();
+
+        // Stateful Sanctum requests are authenticated by the web session; end it
+        // as well so logout cannot be bypassed by a still-valid session cookie.
+        if ($request->hasSession()) {
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
+
         return app(ApiTokenSession::class)->clearRememberCookie(response()->json(['success' => true, 'message' => 'Logged out successfully.']), ApiTokenSession::CUSTOMER_COOKIE, $request);
     }
 

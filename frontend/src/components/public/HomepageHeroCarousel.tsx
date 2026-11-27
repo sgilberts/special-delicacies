@@ -116,7 +116,7 @@ export default function HomepageHeroCarousel({ slides, title, subtitle, announce
       <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/55 via-black/55 to-black/80" />
       <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-col items-center py-20 md:py-28">
         {announcement && <span className="mb-3 inline-block text-xs font-bold uppercase tracking-[0.22em] text-[var(--brand-gold)] md:text-sm">{announcement}</span>}
-        <h1 className="mb-4 text-3xl font-extrabold leading-tight tracking-tight text-white sm:text-4xl md:text-6xl">{title}</h1>
+        <h1 className="mb-4 text-3xl font-extrabold leading-tight tracking-tight !text-white sm:text-4xl md:text-6xl">{title}</h1>
         <p className="mb-8 max-w-2xl text-base leading-relaxed text-white/90 sm:text-lg md:text-xl">{current?.description || subtitle}</p>
         <div className="flex flex-wrap items-center justify-center gap-4">
           {current?.hero_cta_text && current.hero_cta_url ? (

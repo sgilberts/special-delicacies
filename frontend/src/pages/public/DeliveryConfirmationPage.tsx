@@ -40,8 +40,24 @@ type StatusStyle = {
   dot: string;
 };
 
-function getStatusStyle(status: string): StatusStyle {
+function getStatusStyle(status: string, orderType?: string): StatusStyle {
   const s = status.toLowerCase();
+  if (orderType === "pickup" && (s === "ready")) {
+    return {
+      label: "Ready for Pickup",
+      bg: "bg-orange-50 dark:bg-orange-900/20",
+      text: "text-orange-700 dark:text-orange-300",
+      dot: "bg-orange-500",
+    };
+  }
+  if (orderType === "pickup" && (s === "completed" || s === "delivered")) {
+    return {
+      label: "Collected",
+      bg: "bg-green-50 dark:bg-green-900/20",
+      text: "text-green-700 dark:text-green-300",
+      dot: "bg-green-500",
+    };
+  }
   if (s === "confirmed" || s === "accepted")
     return {
       label: "Confirmed",
@@ -81,8 +97,8 @@ function getStatusStyle(status: string): StatusStyle {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: string }) {
-  const style = getStatusStyle(status);
+function StatusBadge({ status, orderType }: { status: string; orderType?: string }) {
+  const style = getStatusStyle(status, orderType);
   return (
     <span
       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold ${style.bg} ${style.text}`}
@@ -118,15 +134,15 @@ function MinimalConfirmation({ orderNumber }: { orderNumber: string }) {
         </div>
 
         <div className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 mb-6">
-          <Banknote size={18} className="text-green-600 dark:text-green-400" />
+          <Clock size={18} className="text-green-600 dark:text-green-400" />
           <span className="font-semibold text-green-800 dark:text-green-300 text-sm">
-            Pay on Delivery
+            Keep your order number to track progress
           </span>
         </div>
 
         <p className="text-stone-500 dark:text-stone-400 text-sm mb-6 leading-relaxed">
-          Your order has been received. Our team will contact you to confirm your order
-          and arrange delivery. Please have your phone available.
+          Your order has been received. Our team will contact you to confirm the details.
+          Please have your phone available.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-3">
@@ -156,6 +172,13 @@ function FullConfirmation({ order }: { order: PlacedOrder }) {
   const subtotal = parseFloat(order.subtotal);
   const deliveryFee = parseFloat(order.delivery_fee);
   const total = parseFloat(order.total);
+  const grandTotal = parseFloat(order.grand_total ?? order.total);
+  const isPickup = order.order_type === "pickup";
+  const foodPaid = order.payment_status === "paid";
+  const deliveryFeeCash = !isPickup
+    && order.delivery_fee_payment_method === "cash_on_delivery"
+    && deliveryFee > 0;
+  const deliveryFeePaid = order.delivery_fee_payment_status === "paid";
 
   return (
     <div className="min-h-screen bg-stone-50 dark:bg-stone-950 pb-16">
@@ -200,7 +223,9 @@ function FullConfirmation({ order }: { order: PlacedOrder }) {
             Order Placed Successfully!
           </h1>
           <p className="text-sm text-stone-500 dark:text-stone-400 mb-5">
-            Thank you, {order.customer_name}! Your delivery is on its way.
+            Thank you, {order.customer_name}! {isPickup
+              ? "Your order is confirmed for pickup."
+              : "Your order is confirmed for delivery."}
           </p>
 
           {/* Order number badge */}
@@ -211,25 +236,39 @@ function FullConfirmation({ order }: { order: PlacedOrder }) {
             {order.order_number}
           </div>
 
-          {/* Pay on delivery */}
+          {/* Payment summary */}
           <div className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 mb-5">
             <Banknote size={20} className="text-green-600 dark:text-green-400" />
             <div className="text-left">
               <p className="font-semibold text-green-800 dark:text-green-300 text-sm">
-                Pay on Delivery
+                {isPickup
+                  ? (foodPaid ? "Paid online" : "Pay at collection")
+                  : (foodPaid
+                    ? (deliveryFeeCash && !deliveryFeePaid ? "Food paid online" : "Paid online")
+                    : "Payment pending")}
               </p>
               <p className="text-xs text-green-600 dark:text-green-500">
-                Cash payment when your order arrives
+                {isPickup
+                  ? (foodPaid
+                    ? "Your food payment is complete."
+                    : `Pay ${formatCurrency(total)} in cash when you collect your order.`)
+                  : (foodPaid
+                    ? (deliveryFeeCash && !deliveryFeePaid
+                      ? `Delivery fee of ${formatCurrency(deliveryFee)} is due in cash on delivery.`
+                      : "Food and delivery fee are paid.")
+                    : "Online payment for the food is required before delivery.")}
               </p>
             </div>
           </div>
 
           {/* Status + contact note */}
           <div className="flex flex-col items-center gap-3">
-            <StatusBadge status={order.status} />
+            <StatusBadge status={order.status} orderType={order.order_type} />
             <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400 bg-stone-50 dark:bg-stone-700/50 px-4 py-2 rounded-lg">
               <Clock size={13} />
-              Our team will contact you to confirm your order
+              {isPickup
+                ? "We will let you know when your order is ready for collection"
+                : "Our team will contact you to confirm your order"}
             </div>
             {order.created_at && (
               <p className="text-xs text-stone-400 dark:text-stone-500">
@@ -304,16 +343,34 @@ function FullConfirmation({ order }: { order: PlacedOrder }) {
                   {formatCurrency(subtotal)}
                 </span>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-stone-500 dark:text-stone-400">Delivery Fee</span>
-                <span className="font-medium text-stone-900 dark:text-stone-100">
-                  {formatCurrency(deliveryFee)}
-                </span>
-              </div>
+              {!isPickup && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-stone-500 dark:text-stone-400">Delivery Fee</span>
+                  <span className="font-medium text-stone-900 dark:text-stone-100">
+                    {formatCurrency(deliveryFee)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between text-base font-bold border-t border-stone-200 dark:border-stone-700 pt-2 mt-1">
-                <span className="text-stone-900 dark:text-stone-100">Total</span>
-                <span style={{ color: "var(--color-accent)" }}>{formatCurrency(total)}</span>
+                <span className="text-stone-900 dark:text-stone-100">Order Total</span>
+                <span style={{ color: "var(--color-accent)" }}>{formatCurrency(grandTotal)}</span>
               </div>
+              {!isPickup && deliveryFeeCash && (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-stone-500 dark:text-stone-400">Paid online now</span>
+                    <span className="font-medium text-stone-900 dark:text-stone-100">
+                      {formatCurrency(total)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-stone-500 dark:text-stone-400">Due in cash on delivery</span>
+                    <span className="font-medium text-stone-900 dark:text-stone-100">
+                      {formatCurrency(deliveryFee)}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -325,33 +382,58 @@ function FullConfirmation({ order }: { order: PlacedOrder }) {
             style={{ backgroundColor: "var(--color-primary)" }}
           >
             <MapPin size={15} className="text-amber-400" />
-            <h2 className="font-semibold text-white text-sm">Delivery Details</h2>
+            <h2 className="font-semibold text-white text-sm">{isPickup ? "Pickup Details" : "Delivery Details"}</h2>
           </div>
           <div className="px-5 py-4 space-y-3">
-            {order.delivery_zone && (
-              <div>
-                <p className="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wide mb-0.5">
-                  Delivery Zone
-                </p>
-                <p className="text-sm font-medium text-stone-900 dark:text-stone-100">
-                  {order.delivery_zone.name}
-                </p>
-                {order.delivery_zone.description && (
-                  <p className="text-xs text-stone-400 dark:text-stone-500 mt-0.5">
-                    {order.delivery_zone.description}
+            {isPickup ? (
+              <>
+                <div>
+                  <p className="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wide mb-0.5">
+                    Pickup Location
                   </p>
+                  <p className="text-sm text-stone-900 dark:text-stone-100 leading-relaxed">
+                    {content.restaurant_address}
+                  </p>
+                </div>
+                {(content.opening_hours_days || content.operating_hours) && (
+                  <div>
+                    <p className="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wide mb-0.5">
+                      Opening Hours
+                    </p>
+                    <p className="text-sm text-stone-900 dark:text-stone-100">
+                      {content.opening_hours_days || content.operating_hours}
+                    </p>
+                  </div>
                 )}
-              </div>
-            )}
-            {order.delivery_address && (
-              <div>
-                <p className="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wide mb-0.5">
-                  Delivery Address
-                </p>
-                <p className="text-sm text-stone-900 dark:text-stone-100 leading-relaxed">
-                  {order.delivery_address}
-                </p>
-              </div>
+              </>
+            ) : (
+              <>
+                {order.delivery_zone && (
+                  <div>
+                    <p className="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wide mb-0.5">
+                      Delivery Zone
+                    </p>
+                    <p className="text-sm font-medium text-stone-900 dark:text-stone-100">
+                      {order.delivery_zone.name}
+                    </p>
+                    {order.delivery_zone.description && (
+                      <p className="text-xs text-stone-400 dark:text-stone-500 mt-0.5">
+                        {order.delivery_zone.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {order.delivery_address && (
+                  <div>
+                    <p className="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wide mb-0.5">
+                      Delivery Address
+                    </p>
+                    <p className="text-sm text-stone-900 dark:text-stone-100 leading-relaxed">
+                      {order.delivery_address}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex items-center gap-2">
               <Phone size={14} className="text-stone-400 flex-shrink-0" />

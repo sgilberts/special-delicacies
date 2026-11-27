@@ -17,6 +17,13 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->appendToGroup('api', [ResolveRememberedApiToken::class]);
+        // The remembered-session cookie must be turned into a bearer token before
+        // Sanctum's Authenticate middleware runs, otherwise persistent sessions
+        // are rejected before the cookie can be resolved.
+        $middleware->prependToPriorityList(
+            \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            ResolveRememberedApiToken::class,
+        );
         $middleware->alias([
             'permission' => EnsureUserHasPermission::class,
             'role' => EnsureUserHasRole::class,

@@ -64,6 +64,78 @@ class RememberMeAuthenticationTest extends TestCase
         });
     }
 
+    public function test_remember_cookie_authenticates_http_requests_and_logout_revokes_it(): void
+    {
+        $this->withCredentials();
+        config(['sanctum.stateful' => []]);
+        $user = User::factory()->create(['email' => 'http-remember@example.test', 'password' => bcrypt('correct horse battery')]);
+        $user->roles()->attach(Role::where('slug', 'super-admin')->firstOrFail());
+
+        $login = $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'correct horse battery',
+            'remember' => true,
+        ])->assertOk();
+
+        $cookie = $login->getCookie('sd_staff_remember', false);
+        $this->assertNotNull($cookie);
+        $this->assertGreaterThanOrEqual(29 * 24 * 60 * 60, $cookie->getMaxAge());
+
+        $this->withUnencryptedCookie('sd_staff_remember', $cookie->getValue())
+            ->getJson('/api/v1/auth/me')
+            ->assertOk()
+            ->assertJsonPath('data.email', $user->email);
+
+        $this->assertSame(1, $user->tokens()->count());
+
+        $this->withUnencryptedCookie('sd_staff_remember', $cookie->getValue())
+            ->withHeader('Origin', 'https://special-delicacies.local')
+            ->postJson('/api/v1/auth/logout')
+            ->assertOk();
+
+        $this->assertSame(0, $user->tokens()->count());
+
+        // Each real HTTP request gets a fresh guard; clear the test container's cache.
+        $this->app['auth']->forgetGuards();
+
+        $this->withUnencryptedCookie('sd_staff_remember', $cookie->getValue())
+            ->getJson('/api/v1/auth/me')
+            ->assertUnauthorized();
+    }
+
+    public function test_customer_remember_cookie_authenticates_customer_profile_only(): void
+    {
+        $this->withCredentials();
+        config(['sanctum.stateful' => []]);
+        $customer = Customer::create([
+            'name' => 'Remembering Customer',
+            'phone' => '0240000002',
+            'email' => 'remembering@example.test',
+            'password' => bcrypt('correct horse battery'),
+            'is_active' => true,
+        ]);
+
+        $login = $this->postJson('/api/v1/customers/login', [
+            'phone' => $customer->phone,
+            'password' => 'correct horse battery',
+            'remember' => true,
+        ])->assertOk();
+
+        $cookie = $login->getCookie('sd_customer_remember', false);
+        $this->assertNotNull($cookie);
+
+        $this->withUnencryptedCookie('sd_customer_remember', $cookie->getValue())
+            ->getJson('/api/v1/customer/profile')
+            ->assertOk()
+            ->assertJsonPath('data.phone', $customer->phone);
+
+        $this->app['auth']->forgetGuards();
+
+        $this->withUnencryptedCookie('sd_customer_remember', $cookie->getValue())
+            ->getJson('/api/v1/auth/me')
+            ->assertUnauthorized();
+    }
+
     public function test_unchecked_login_returns_a_tab_scoped_token_with_server_expiration(): void
     {
         $user = User::factory()->create(['email' => 'session@example.test', 'password' => bcrypt('correct horse battery')]);
