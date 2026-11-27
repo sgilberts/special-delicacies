@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useAuth } from "@/app/providers/useAuth";
+import StaffDepositPanel from "@/components/admin/StaffDepositPanel";
 
 type Receipt = { id: number; reference: string; payer: { type: string; id: number; name: string }; amount: string; currency: string; intent: "deposit" | "advance" | null; reason: string | null; unallocated_amount: string; verified_at: string; received_at: string };
 type Invoice = { id: number; document_number: string; payer: { type: string; id: number; name: string }; currency: string; total: string; payment_summary: { outstanding_balance: string; credit_applied_amount: string } };
@@ -72,6 +73,8 @@ export default function AdminCustomerCreditPage() {
     <header><p className="text-xs font-bold uppercase tracking-[.18em] text-[var(--color-accent)]">Stage 4B · Finance</p><h1 className="mt-1 text-2xl font-black">Deposits and customer credit</h1><p className="mt-1 text-sm text-[var(--color-text-secondary)]">Only verified, unallocated invoice receipts are eligible. Every designation and application is recorded in the credit ledger.</p></header>
     {!loaded && <p role="status" className="rounded-xl border p-3 text-sm text-[var(--color-text-secondary)]" style={{ borderColor: "var(--color-border)" }}>Loading deposits and customer credit…</p>}
     {message && <p role="status" className="rounded-xl bg-[var(--color-success)]/10 p-3 text-sm">{message}</p>}{error && <p role="alert" className="rounded-xl bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">{error}</p>}
+
+    {canViewDeposits && <StaffDepositPanel canManage={canManageDeposits} />}
 
     {canViewDeposits && <section className="rounded-2xl border bg-[var(--color-surface)] p-5" style={{ borderColor: "var(--color-border)" }}>
       <h2 className="text-lg font-bold">Eligible unallocated receipts</h2>
