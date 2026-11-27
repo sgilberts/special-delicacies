@@ -30,3 +30,4 @@ Files named `PHASE-*.md` preserve decisions and implementation details from thei
 - [Stage 4B Browser Acceptance Report](STAGE-4B-BROWSER-ACCEPTANCE-REPORT.md) — Super-admin, independent verifier, invoice allocation, denial, and HMR evidence.
 - [Stage 4B PR Overlap and Integration Report](STAGE-4B-PR-OVERLAP-AND-INTEGRATION-REPORT.md) — PR #1 / PR #2 overlap analysis and safe integration strategy.
 - [Stage 4B Final Closure Report](STAGE-4B-FINAL-CLOSURE-REPORT.md) — Final classification, conditions, test totals, and recommended next action.
+- [Stage 4B PR #1 Final Remediation Report](STAGE-4B-PR-1-FINAL-REMEDIATION-REPORT.md) — State verification, guard integration scope and evidence, projected PR #1 diff, PR #2 overlap and `booted()` resolution, repeated test results, external dependencies and readiness classification.
