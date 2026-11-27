@@ -5,13 +5,19 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Services\GatewayPaymentService;
+use App\Services\RefundGatewayService;
+use App\Services\RefundService;
 use App\Events\OrderTrackingUpdated;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PaymentController extends Controller
 {
-    public function __construct(private GatewayPaymentService $payments) {}
+    public function __construct(
+        private GatewayPaymentService $payments,
+        private RefundGatewayService $refundGateway,
+        private RefundService $refunds,
+    ) {}
 
     public function options(): JsonResponse
     {
@@ -71,12 +77,25 @@ class PaymentController extends Controller
 
     public function webhook(Request $request): JsonResponse
     {
-        $accepted = $this->payments->consumeWebhook(
-            'paystack',
-            $request->getContent(),
-            (string) $request->header('x-paystack-signature', ''),
-            (string) $request->header('paystack-signature', '')
-        );
+        $payload = $request->getContent();
+        $signature = (string) $request->header('x-paystack-signature', '');
+        $paystackSignature = (string) $request->header('paystack-signature', '');
+
+        // Stage 4C refund callbacks use the same authenticated Paystack webhook
+        // URL as charge events. Non-refund payloads fall through unchanged.
+        $refundEvent = $this->refundGateway->parsePaystackRefundWebhook($payload, $signature, $paystackSignature);
+        if ($refundEvent !== null) {
+            if (! $refundEvent['valid']) return response()->json(['success' => false], 401);
+            if ($refundEvent['refund']) {
+                $this->refunds->applyGatewayOutcome(
+                    $refundEvent['refund'], $refundEvent['status'], $refundEvent['gateway_reference'],
+                    $refundEvent['message'], $refundEvent['amount_minor'], $refundEvent['currency'],
+                );
+            }
+            return response()->json(['success' => true]);
+        }
+
+        $accepted = $this->payments->consumeWebhook('paystack', $payload, $signature, $paystackSignature);
         return response()->json(['success' => $accepted], $accepted ? 200 : 401);
     }
 

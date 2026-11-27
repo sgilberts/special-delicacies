@@ -39,7 +39,7 @@ class PaymentAllocationService
                 $organisation->whereNull('customer_id')->whereNotNull('organisation_id');
             });
         });
-        $query->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type = 'designation'), 0)");
+        $query->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type IN ('designation', 'refund_credit')), 0)");
 
         if (filled($filters['search'] ?? null)) {
             $term = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $filters['search']).'%';
@@ -88,7 +88,7 @@ class PaymentAllocationService
             ->where('total', '>', 0);
         if ($payment->organisation_id !== null) $query->where('organisation_id', $payment->organisation_id);
         else $query->whereNull('organisation_id')->where('customer_id', $payment->customer_id);
-        $query->whereRaw("commercial_documents.total > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE pa.commercial_document_id = commercial_documents.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.commercial_document_id = commercial_documents.id AND ce.entry_type = 'application'), 0)");
+        $query->whereRaw("commercial_documents.total > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE pa.commercial_document_id = commercial_documents.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.commercial_document_id = commercial_documents.id AND ce.entry_type = 'application'), 0) + COALESCE((SELECT SUM(cna.amount) FROM credit_note_applications cna WHERE cna.commercial_document_id = commercial_documents.id), 0)");
 
         return $query->orderBy('issue_date')->orderBy('id')->paginate(50)->through(function (CommercialDocument $document): array {
             $summary = $this->summaryForDocument($document);
@@ -122,8 +122,9 @@ class PaymentAllocationService
             ->where('commercial_document_id', $document->id)
             ->where('entry_type', 'application')
             ->sum('amount') ?: '0'));
+        $creditNoteApplied = $this->creditNoteAppliedMinorForDocument($document->id);
         $settled = $allocated + $creditApplied;
-        $outstanding = max(0, $total - $settled);
+        $outstanding = max(0, $total - $settled - $creditNoteApplied);
 
         return [
             'document_id' => $document->id,
@@ -132,9 +133,10 @@ class PaymentAllocationService
             'invoice_total' => self::formatMinorUnits($total),
             'allocated_amount' => self::formatMinorUnits($allocated),
             'credit_applied_amount' => self::formatMinorUnits($creditApplied),
+            'credit_note_reduction' => self::formatMinorUnits($creditNoteApplied),
             'settled_amount' => self::formatMinorUnits($settled),
             'outstanding_balance' => self::formatMinorUnits($outstanding),
-            'payment_state' => $settled === 0 ? 'unpaid' : ($outstanding === 0 ? 'fully_paid' : 'partially_paid'),
+            'payment_state' => $settled === 0 && $creditNoteApplied === 0 ? 'unpaid' : ($outstanding === 0 ? 'fully_paid' : 'partially_paid'),
         ];
     }
 
@@ -215,7 +217,7 @@ class PaymentAllocationService
     public function creditDesignatedMinorForPayment(int $paymentId): int
     {
         $amount = DB::table('customer_credit_ledger_entries')->where('source_payment_transaction_id', $paymentId)
-            ->where('entry_type', 'designation')->sum('amount');
+            ->whereIn('entry_type', ['designation', 'refund_credit'])->sum('amount');
         return self::toMinorUnits((string) ($amount ?: '0'));
     }
 
@@ -416,9 +418,21 @@ class PaymentAllocationService
         $creditApplied = DB::table('customer_credit_ledger_entries')
             ->where('commercial_document_id', $documentId)
             ->where('entry_type', 'application')->sum('amount');
+        // Stage 4C: an applied credit note is a documented reduction of the
+        // invoice, not a payment settlement, so it lowers what is still owed.
+        $creditNoteApplied = DB::table('credit_note_applications')
+            ->where('commercial_document_id', $documentId)->sum('amount');
         return self::toMinorUnits($total)
             - self::toMinorUnits((string) ($allocated ?: '0'))
-            - self::toMinorUnits((string) ($creditApplied ?: '0'));
+            - self::toMinorUnits((string) ($creditApplied ?: '0'))
+            - self::toMinorUnits((string) ($creditNoteApplied ?: '0'));
+    }
+
+    /** Total credit-note value applied against an invoice. */
+    public function creditNoteAppliedMinorForDocument(int $documentId): int
+    {
+        return self::toMinorUnits((string) (DB::table('credit_note_applications')
+            ->where('commercial_document_id', $documentId)->sum('amount') ?: '0'));
     }
 
     private function sameLines(PaymentAllocationOperation $operation, array $normalized): bool

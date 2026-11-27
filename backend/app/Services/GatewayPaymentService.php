@@ -276,7 +276,8 @@ class GatewayPaymentService
         return PaymentGateway::where('provider', 'paystack')->whereNotNull('secret_key')->orderByDesc('is_default')->first();
     }
 
-    private function validPaystackWebhookSignature(PaymentGateway $gateway, string $payload, string $legacySignature, string $signatureHeader): bool
+    /** Shared with RefundGatewayService so refund callbacks use the same authenticated contract. */
+    public function validPaystackWebhookSignature(PaymentGateway $gateway, string $payload, string $legacySignature, string $signatureHeader): bool
     {
         if ($signatureHeader !== '') {
             $timestamp = null;

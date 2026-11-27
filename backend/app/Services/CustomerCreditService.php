@@ -27,7 +27,7 @@ class CustomerCreditService
                 $payer->where(fn (Builder $q) => $q->whereNotNull('customer_id')->whereNull('organisation_id'))
                     ->orWhere(fn (Builder $q) => $q->whereNull('customer_id')->whereNotNull('organisation_id'));
             })
-            ->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type = 'designation'), 0)")
+            ->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type IN ('designation', 'refund_credit')), 0)")
             ->orderByDesc('received_at')->orderByDesc('id');
 
         if (filled($filters['search'] ?? null)) {
@@ -46,7 +46,7 @@ class CustomerCreditService
         $query = CommercialDocument::query()->with(['customer:id,name', 'organisation:id,name'])
             ->where('document_type', CommercialDocument::TYPE_INVOICE)
             ->where('status', CommercialDocument::STATUS_ISSUED)->whereNotNull('issued_at')->whereNull('voided_at')->where('total', '>', 0)
-            ->whereRaw("commercial_documents.total > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE pa.commercial_document_id = commercial_documents.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.commercial_document_id = commercial_documents.id AND ce.entry_type = 'application'), 0)")
+            ->whereRaw("commercial_documents.total > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE pa.commercial_document_id = commercial_documents.id AND pr IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.commercial_document_id = commercial_documents.id AND ce.entry_type = 'application'), 0) + COALESCE((SELECT SUM(cna.amount) FROM credit_note_applications cna WHERE cna.commercial_document_id = commercial_documents.id), 0)")
             ->orderByDesc('issue_date')->orderByDesc('id');
         if (filled($filters['search'] ?? null)) {
             $term = '%'.str_replace(['%', '_'], ['\\%', '\\_'], (string) $filters['search']).'%';
@@ -151,11 +151,58 @@ class CustomerCreditService
         }, 3);
     }
 
+    /**
+     * Post an approved refund whose destination is the customer credit ledger.
+     *
+     * The posting is idempotent per refund (unique source_refund_id), immutable,
+     * and always references the original payment and the refund record so the
+     * money movement stays traceable. It does not validate against the payment's
+     * unallocated balance because refunded funds were already recognised as paid.
+     */
+    public function postRefundCredit(\App\Models\Refund $refund, User $actor): CustomerCreditLedgerEntry
+    {
+        return DB::transaction(function () use ($refund, $actor): CustomerCreditLedgerEntry {
+            $locked = \App\Models\Refund::query()->lockForUpdate()->findOrFail($refund->id);
+            if ($locked->refund_method !== \App\Models\Refund::METHOD_CUSTOMER_CREDIT) {
+                throw new DomainException('This refund is not destined for customer credit.');
+            }
+
+            // Idempotent replay: an existing posting always wins, including for
+            // a refund that has already completed.
+            $existing = CustomerCreditLedgerEntry::query()->where('source_refund_id', $locked->id)->first();
+            if ($existing) return $existing;
+
+            if (! in_array($locked->status, [\App\Models\Refund::STATUS_APPROVED, \App\Models\Refund::STATUS_PROCESSING], true)) {
+                throw new DomainException('Only an approved refund can be posted as customer credit.');
+            }
+
+            $payment = PaymentTransaction::query()->lockForUpdate()->find($locked->payment_transaction_id);
+            if (! $payment) throw new DomainException('The original payment no longer exists.');
+            if ($payment->currency !== $locked->currency) throw new DomainException('The refund currency does not match the original payment.');
+            $payer = $this->payerFor($payment);
+            $samePayer = $payer instanceof Customer
+                ? (int) $locked->customer_id === (int) $payer->id && $locked->organisation_id === null
+                : (int) $locked->organisation_id === (int) $payer->id && $locked->customer_id === null;
+            if (! $samePayer) throw new DomainException('The refund payer does not match the original payment payer.');
+
+            $this->lockPayer($payer);
+            $minor = PaymentAllocationService::toMinorUnits((string) $locked->amount);
+            if ($minor <= 0) throw new DomainException('The refund amount must be greater than zero.');
+            $creditBefore = $this->creditBalanceMinor($payer, $locked->currency, true);
+
+            return CustomerCreditLedgerEntry::query()->create($this->entryData(
+                CustomerCreditLedgerEntry::TYPE_REFUND_CREDIT, 'refund-credit:'.$locked->refund_reference, $payer,
+                $locked->currency, $minor, $locked->reason, $actor, $creditBefore, $creditBefore + $minor,
+                $payment->id, null, null, null, null, null, $locked->id,
+            ));
+        }, 3);
+    }
+
     public function balanceMinor(Customer|Organisation $payer, string $currency): int
     {
         $base = CustomerCreditLedgerEntry::query()->where('currency', $currency);
         $payer instanceof Customer ? $base->where('customer_id', $payer->id)->whereNull('organisation_id') : $base->where('organisation_id', $payer->id)->whereNull('customer_id');
-        $credit = (clone $base)->where('entry_type', CustomerCreditLedgerEntry::TYPE_DESIGNATION)->sum('amount');
+        $credit = (clone $base)->whereIn('entry_type', [CustomerCreditLedgerEntry::TYPE_DESIGNATION, CustomerCreditLedgerEntry::TYPE_REFUND_CREDIT])->sum('amount');
         $used = (clone $base)->where('entry_type', CustomerCreditLedgerEntry::TYPE_APPLICATION)->sum('amount');
         return PaymentAllocationService::toMinorUnits((string) ($credit ?: '0')) - PaymentAllocationService::toMinorUnits((string) ($used ?: '0'));
     }
@@ -294,22 +341,22 @@ class CustomerCreditService
             $applications = 0;
             foreach ($query->orderBy('id')->lockForUpdate()->get(['entry_type', 'amount']) as $entry) {
                 $minor = PaymentAllocationService::toMinorUnits((string) $entry->amount);
-                $entry->entry_type === CustomerCreditLedgerEntry::TYPE_DESIGNATION
+                in_array($entry->entry_type, [CustomerCreditLedgerEntry::TYPE_DESIGNATION, CustomerCreditLedgerEntry::TYPE_REFUND_CREDIT], true)
                     ? $credits += $minor
                     : $applications += $minor;
             }
             return $credits - $applications;
         }
-        $credits = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_DESIGNATION)->sum('amount');
+        $credits = (clone $query)->whereIn('entry_type', [CustomerCreditLedgerEntry::TYPE_DESIGNATION, CustomerCreditLedgerEntry::TYPE_REFUND_CREDIT])->sum('amount');
         $applications = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_APPLICATION)->sum('amount');
         return PaymentAllocationService::toMinorUnits((string) ($credits ?: '0')) - PaymentAllocationService::toMinorUnits((string) ($applications ?: '0'));
     }
 
-    private function entryData(string $type, string $reference, Customer|Organisation $payer, string $currency, int $amount, string $reason, User $actor, int $creditBefore, int $creditAfter, ?int $paymentId, ?int $documentId, ?int $paymentBefore, ?int $paymentAfter, ?int $invoiceBefore, ?int $invoiceAfter): array
+    private function entryData(string $type, string $reference, Customer|Organisation $payer, string $currency, int $amount, string $reason, User $actor, int $creditBefore, int $creditAfter, ?int $paymentId, ?int $documentId, ?int $paymentBefore, ?int $paymentAfter, ?int $invoiceBefore, ?int $invoiceAfter, ?int $refundId = null): array
     {
         return [
             'entry_type' => $type, 'operation_reference' => $reference,
-            'source_payment_transaction_id' => $paymentId, 'commercial_document_id' => $documentId,
+            'source_payment_transaction_id' => $paymentId, 'source_refund_id' => $refundId, 'commercial_document_id' => $documentId,
             'customer_id' => $payer instanceof Customer ? $payer->id : null,
             'organisation_id' => $payer instanceof Organisation ? $payer->id : null,
             'actor_user_id' => $actor->id, 'actor_user_id_snapshot' => $actor->id,

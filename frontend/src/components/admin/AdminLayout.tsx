@@ -129,10 +129,21 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   if (hasAnyPermission(userPermissions, ["financials.deposits.view", "financials.deposits.manage", "financials.customer_credit.view", "financials.customer_credit.manage"], user?.roles)) {
     financeItems.push({ label: "Deposits & Credit", to: "/admin/customer-credit", icon: WalletCards });
   }
+  if (hasAnyPermission(userPermissions, ["financials.refunds.view"], user?.roles)) {
+    financeItems.push({ label: "Refunds", to: "/admin/refunds", icon: WalletCards });
+  }
   if (financeItems.length > 0) sections.push({ heading: "Finance", items: financeItems });
 
-  if (hasAnyPermission(userPermissions, ["commercial_documents.view", "commercial_documents.manage"], user?.roles)) {
-    sections.push({ heading: "Commercial", items: [{ label: "Quotations & Invoices", to: "/admin/commercial-documents", icon: FileText }] });
+  if (hasAnyPermission(userPermissions, ["commercial_documents.view", "commercial_documents.manage", "financials.credit_notes.view"], user?.roles)) {
+    sections.push({
+      heading: "Commercial",
+      items: [
+        { label: "Quotations & Invoices", to: "/admin/commercial-documents", icon: FileText },
+        ...(hasAnyPermission(userPermissions, ["financials.credit_notes.view"], user?.roles)
+          ? [{ label: "Credit Notes", to: "/admin/credit-notes", icon: FileText }]
+          : []),
+      ],
+    });
   }
 
   if (isSuperAdmin || userPermissions.some((permission) => ["chat.view_assigned", "chat.view_all"].includes(permission))) {
