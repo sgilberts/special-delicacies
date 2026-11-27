@@ -56,7 +56,7 @@ export const ProtectedRoute: React.FC<{
         </div>
         <Link
           to="/admin"
-          className="rounded-xl bg-[var(--brand-copper)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+          className="btn-accent px-4 py-2 text-sm font-semibold"
         >
           Return to dashboard
         </Link>

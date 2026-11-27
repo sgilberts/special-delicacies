@@ -214,9 +214,19 @@ class PaymentAllocationService
 
     public function creditDesignatedMinorForPayment(int $paymentId): int
     {
-        $amount = DB::table('customer_credit_ledger_entries')->where('source_payment_transaction_id', $paymentId)
+        $designated = DB::table('customer_credit_ledger_entries')->where('source_payment_transaction_id', $paymentId)
             ->where('entry_type', 'designation')->sum('amount');
-        return self::toMinorUnits((string) ($amount ?: '0'));
+
+        // A credit reversal is a compensating entry: the reversed portion returns
+        // to the receipt's uncommitted funds, so it no longer consumes the payment.
+        $reversed = DB::table('customer_credit_ledger_entries as rev')
+            ->join('customer_credit_ledger_entries as orig', 'orig.id', '=', 'rev.reverses_entry_id')
+            ->where('orig.source_payment_transaction_id', $paymentId)
+            ->where('orig.entry_type', 'designation')
+            ->where('rev.entry_type', 'reversal')
+            ->sum('rev.amount');
+
+        return max(0, self::toMinorUnits((string) ($designated ?: '0')) - self::toMinorUnits((string) ($reversed ?: '0')));
     }
 
     public function invoiceOutstandingMinor(CommercialDocument $document): int

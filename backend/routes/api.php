@@ -36,6 +36,9 @@ use App\Http\Controllers\Api\V1\Admin\PaymentAllocationController;
 use App\Http\Controllers\Api\V1\Admin\CustomerCreditController as AdminCustomerCreditController;
 use App\Http\Controllers\Api\V1\Admin\DepositController as AdminDepositController;
 use App\Http\Controllers\Api\V1\Admin\CommercialDocumentController;
+use App\Http\Controllers\Api\V1\Admin\RefundController;
+use App\Http\Controllers\Api\V1\Admin\CreditNoteController;
+use App\Http\Controllers\Api\V1\Admin\CreditReversalController;
 use App\Http\Controllers\Api\V1\Admin\ChatAdminController;
 use App\Http\Controllers\Api\V1\PublicContentController;
 use App\Http\Controllers\Api\V1\PublicDeliveryZoneController;
@@ -375,6 +378,59 @@ Route::prefix('v1')->group(function () {
             Route::get('/{deposit}', [AdminDepositController::class, 'show'])->whereNumber('deposit')->middleware('permission:financials.deposits.view,financials.deposits.manage');
             Route::post('/{deposit}/verify', [AdminDepositController::class, 'verify'])->whereNumber('deposit')->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
             Route::post('/{deposit}/reject', [AdminDepositController::class, 'reject'])->whereNumber('deposit')->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
+        });
+
+        // Stage 4C: Refunds
+        Route::prefix('admin/financials/refunds')->group(function () {
+            $viewRefunds = 'permission:financials.refunds.view,financials.refunds.initiate,financials.refunds.approve';
+            Route::get('/eligible-payments', [RefundController::class, 'eligiblePayments'])
+                ->middleware('permission:financials.refunds.view,financials.refunds.initiate');
+            Route::get('/', [RefundController::class, 'index'])->middleware($viewRefunds);
+            Route::post('/', [RefundController::class, 'store'])
+                ->middleware(['permission:financials.refunds.initiate', 'throttle:20,1']);
+            Route::get('/{refund}', [RefundController::class, 'show'])->middleware($viewRefunds);
+            Route::post('/{refund}/approve', [RefundController::class, 'approve'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/reject', [RefundController::class, 'reject'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/submit', [RefundController::class, 'submit'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/confirm', [RefundController::class, 'confirm'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/reconcile', [RefundController::class, 'reconcile'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/fail', [RefundController::class, 'fail'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+        });
+
+        // Stage 4C: Credit notes
+        Route::prefix('admin/financials/credit-notes')->group(function () {
+            $viewNotes = 'permission:financials.credit_notes.view,financials.credit_notes.create,financials.credit_notes.approve';
+            Route::get('/eligible-invoices', [CreditNoteController::class, 'eligibleInvoices'])
+                ->middleware('permission:financials.credit_notes.view,financials.credit_notes.create');
+            Route::get('/', [CreditNoteController::class, 'index'])->middleware($viewNotes);
+            Route::post('/', [CreditNoteController::class, 'store'])
+                ->middleware(['permission:financials.credit_notes.create', 'throttle:20,1']);
+            Route::get('/{creditNote}', [CreditNoteController::class, 'show'])->middleware($viewNotes);
+            Route::post('/{creditNote}/issue', [CreditNoteController::class, 'issue'])
+                ->middleware(['permission:financials.credit_notes.approve', 'throttle:20,1']);
+            Route::post('/{creditNote}/void', [CreditNoteController::class, 'void'])
+                ->middleware(['permission:financials.credit_notes.approve', 'throttle:20,1']);
+        });
+
+        // Stage 4C: Customer credit reversals
+        Route::prefix('admin/financials/credit-reversals')->group(function () {
+            $viewReversals = 'permission:financials.credit_reversals.view,financials.credit_reversals.initiate,financials.credit_reversals.approve';
+            Route::get('/eligible', [CreditReversalController::class, 'eligible'])
+                ->middleware('permission:financials.credit_reversals.view,financials.credit_reversals.initiate');
+            Route::get('/', [CreditReversalController::class, 'index'])->middleware($viewReversals);
+            Route::get('/{ledgerEntry}/preview', [CreditReversalController::class, 'preview'])->middleware($viewReversals);
+            Route::post('/', [CreditReversalController::class, 'store'])
+                ->middleware(['permission:financials.credit_reversals.initiate', 'throttle:20,1']);
+            Route::post('/{creditReversal}/approve', [CreditReversalController::class, 'approve'])
+                ->middleware(['permission:financials.credit_reversals.approve', 'throttle:20,1']);
+            Route::post('/{creditReversal}/reject', [CreditReversalController::class, 'reject'])
+                ->middleware(['permission:financials.credit_reversals.approve', 'throttle:20,1']);
         });
 
         // Phase 9: Staff & User Management

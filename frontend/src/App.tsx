@@ -56,6 +56,9 @@ const CustomerDocumentsPage = lazy(() => import("@/pages/customer/CustomerDocume
 const CustomerDocumentDetailPage = lazy(() => import("@/pages/customer/CustomerDocumentDetailPage"));
 const AdminCommercialDocumentsPage = lazy(() => import("@/pages/admin/AdminCommercialDocumentsPage"));
 const AdminCustomerCreditPage = lazy(() => import("@/pages/admin/AdminCustomerCreditPage"));
+const AdminRefundsPage = lazy(() => import("@/pages/admin/AdminRefundsPage"));
+const AdminCreditNotesPage = lazy(() => import("@/pages/admin/AdminCreditNotesPage"));
+const AdminCreditReversalsPage = lazy(() => import("@/pages/admin/AdminCreditReversalsPage"));
 const PasswordRecoveryPage = lazy(() => import("@/pages/account/PasswordRecoveryPage"));
 
 function App() {
@@ -147,6 +150,9 @@ function App() {
         <Route path="payment-allocations" element={<ProtectedRoute requiredPermissions={["financials.allocations.view", "financials.allocations.manage"]}><AdminPaymentAllocationsPage /></ProtectedRoute>} />
         <Route path="customer-credit" element={<ProtectedRoute requiredPermissions={["financials.deposits.view", "financials.deposits.manage", "financials.customer_credit.view", "financials.customer_credit.manage"]}><AdminCustomerCreditPage /></ProtectedRoute>} />
         <Route path="commercial-documents" element={<ProtectedRoute requiredPermissions={["commercial_documents.view"]}><AdminCommercialDocumentsPage /></ProtectedRoute>} />
+        <Route path="refunds" element={<ProtectedRoute requiredPermissions={["financials.refunds.view", "financials.refunds.initiate", "financials.refunds.approve"]}><AdminRefundsPage /></ProtectedRoute>} />
+        <Route path="credit-notes" element={<ProtectedRoute requiredPermissions={["financials.credit_notes.view", "financials.credit_notes.create", "financials.credit_notes.approve"]}><AdminCreditNotesPage /></ProtectedRoute>} />
+        <Route path="credit-reversals" element={<ProtectedRoute requiredPermissions={["financials.credit_reversals.view", "financials.credit_reversals.initiate", "financials.credit_reversals.approve"]}><AdminCreditReversalsPage /></ProtectedRoute>} />
         <Route path="chat" element={<AdminChatPage />} />
         <Route path="chat/settings" element={<AdminChatSettingsPage />} />
       </Route>

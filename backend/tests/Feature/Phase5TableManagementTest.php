@@ -293,6 +293,10 @@ class Phase5TableManagementTest extends TestCase
 
     public function test_existing_qr_urls_are_migrated_to_query_token_format(): void
     {
+        // Pin the public frontend URL so the expected QR URL does not depend on
+        // the container's FRONTEND_URL value.
+        config(['app.frontend_url' => 'https://special-delicacies.local']);
+
         Sanctum::actingAs($this->admin);
         $table = RestaurantTable::create(['table_number' => 'T-QR-URL', 'capacity' => 4]);
         $generated = $this->postJson("/api/v1/admin/tables/{$table->id}/qr/generate");

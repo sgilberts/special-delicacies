@@ -24,6 +24,9 @@ import {
   WalletCards,
   MessageCircle,
   FileText,
+  RotateCcw,
+  FileMinus,
+  Undo2,
 } from "lucide-react";
 import { useAuth } from "@/app/providers/useAuth";
 import ThemeToggle from "@/components/public/ThemeToggle";
@@ -128,6 +131,15 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   }
   if (hasAnyPermission(userPermissions, ["financials.deposits.view", "financials.deposits.manage", "financials.customer_credit.view", "financials.customer_credit.manage"], user?.roles)) {
     financeItems.push({ label: "Deposits & Credit", to: "/admin/customer-credit", icon: WalletCards });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.refunds.view", "financials.refunds.initiate", "financials.refunds.approve"], user?.roles)) {
+    financeItems.push({ label: "Refunds", to: "/admin/refunds", icon: RotateCcw });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.credit_notes.view", "financials.credit_notes.create", "financials.credit_notes.approve"], user?.roles)) {
+    financeItems.push({ label: "Credit Notes", to: "/admin/credit-notes", icon: FileMinus });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.credit_reversals.view", "financials.credit_reversals.initiate", "financials.credit_reversals.approve"], user?.roles)) {
+    financeItems.push({ label: "Credit Reversals", to: "/admin/credit-reversals", icon: Undo2 });
   }
   if (financeItems.length > 0) sections.push({ heading: "Finance", items: financeItems });
 
