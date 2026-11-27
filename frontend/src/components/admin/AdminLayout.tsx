@@ -23,7 +23,11 @@ import {
   History,
   WalletCards,
   MessageCircle,
+  Contact,
   FileText,
+  RotateCcw,
+  FileMinus,
+  Undo2,
 } from "lucide-react";
 import { useAuth } from "@/app/providers/useAuth";
 import ThemeToggle from "@/components/public/ThemeToggle";
@@ -129,14 +133,36 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   if (hasAnyPermission(userPermissions, ["financials.deposits.view", "financials.deposits.manage", "financials.customer_credit.view", "financials.customer_credit.manage"], user?.roles)) {
     financeItems.push({ label: "Deposits & Credit", to: "/admin/customer-credit", icon: WalletCards });
   }
+  if (hasAnyPermission(userPermissions, ["financials.refunds.view", "financials.refunds.initiate", "financials.refunds.approve"], user?.roles)) {
+    financeItems.push({ label: "Refunds", to: "/admin/refunds", icon: RotateCcw });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.credit_notes.view", "financials.credit_notes.create", "financials.credit_notes.approve"], user?.roles)) {
+    financeItems.push({ label: "Credit Notes", to: "/admin/credit-notes", icon: FileMinus });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.credit_reversals.view", "financials.credit_reversals.initiate", "financials.credit_reversals.approve"], user?.roles)) {
+    financeItems.push({ label: "Credit Reversals", to: "/admin/credit-reversals", icon: Undo2 });
+  }
   if (financeItems.length > 0) sections.push({ heading: "Finance", items: financeItems });
 
   if (hasAnyPermission(userPermissions, ["commercial_documents.view", "commercial_documents.manage"], user?.roles)) {
     sections.push({ heading: "Commercial", items: [{ label: "Quotations & Invoices", to: "/admin/commercial-documents", icon: FileText }] });
   }
 
+  // Customer Support groups the customer record and the support inbox. Each
+  // item appears only for the capability it needs, so a customer administrator
+  // without chat access still gets the section.
+  const customerSupportItems: NavItem[] = [];
   if (isSuperAdmin || userPermissions.some((permission) => ["chat.view_assigned", "chat.view_all"].includes(permission))) {
-    sections.push({ heading: "Customer Support", items: [{ label: "Live Chat Inbox", to: "/admin/chat", icon: MessageCircle }, ...(isSuperAdmin || userPermissions.includes("chat.manage_settings") ? [{ label: "Chat Availability", to: "/admin/chat/settings", icon: MessageCircle }] : [])] });
+    customerSupportItems.push({ label: "Live Chat Inbox", to: "/admin/chat", icon: MessageCircle });
+    if (isSuperAdmin || userPermissions.includes("chat.manage_settings")) {
+      customerSupportItems.push({ label: "Chat Availability", to: "/admin/chat/settings", icon: MessageCircle });
+    }
+  }
+  if (hasAnyPermission(userPermissions, ["customers.view"], user?.roles)) {
+    customerSupportItems.push({ label: "Customers", to: "/admin/customers", icon: Contact });
+  }
+  if (customerSupportItems.length > 0) {
+    sections.push({ heading: "Customer Support", items: customerSupportItems });
   }
 
   if (operationsItems.length > 0) {

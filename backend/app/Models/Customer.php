@@ -22,12 +22,28 @@ class Customer extends Authenticatable
             'password' => 'hashed',
             'email_verified_at' => 'datetime',
             'phone_verified_at' => 'datetime',
+            // Not fillable: only the archive/restore lifecycle writes this.
+            'archived_at' => 'datetime',
         ];
+    }
+
+    /**
+     * An archived customer is retained with all financial and audit history but
+     * is no longer treated as an active customer account.
+     */
+    public function isArchived(): bool
+    {
+        return $this->archived_at !== null;
     }
 
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class);
+    }
+
+    public function paymentTransactions(): HasMany
+    {
+        return $this->hasMany(PaymentTransaction::class);
     }
 
     public function organisationMemberships(): HasMany

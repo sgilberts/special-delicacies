@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Admin\AdminAuditLogController;
+use App\Http\Controllers\Api\V1\Admin\AdminCustomerController;
 use App\Http\Controllers\Api\V1\Admin\AdminDashboardController;
 use App\Http\Controllers\Api\V1\Admin\AdminOrderController;
 use App\Http\Controllers\Api\V1\Admin\AdminRolePermissionController;
@@ -21,6 +22,7 @@ use App\Http\Controllers\Api\V1\PasswordRecoveryController;
 use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\CustomerCreditController;
+use App\Http\Controllers\Api\V1\CustomerDepositController;
 use App\Http\Controllers\Api\V1\CustomerCommercialDocumentController;
 use App\Http\Controllers\Api\V1\OrganisationController;
 use App\Http\Controllers\Api\V1\OrganisationInvitationController;
@@ -33,12 +35,17 @@ use App\Http\Controllers\Api\V1\Admin\AdminPaymentGatewayController;
 use App\Http\Controllers\Api\V1\Admin\FinancialController;
 use App\Http\Controllers\Api\V1\Admin\PaymentAllocationController;
 use App\Http\Controllers\Api\V1\Admin\CustomerCreditController as AdminCustomerCreditController;
+use App\Http\Controllers\Api\V1\Admin\DepositController as AdminDepositController;
 use App\Http\Controllers\Api\V1\Admin\CommercialDocumentController;
+use App\Http\Controllers\Api\V1\Admin\RefundController;
+use App\Http\Controllers\Api\V1\Admin\CreditNoteController;
+use App\Http\Controllers\Api\V1\Admin\CreditReversalController;
 use App\Http\Controllers\Api\V1\Admin\ChatAdminController;
 use App\Http\Controllers\Api\V1\PublicContentController;
 use App\Http\Controllers\Api\V1\PublicDeliveryZoneController;
 use App\Http\Controllers\Api\V1\TableQrController;
 use App\Http\Middleware\EnsureCustomerAccount;
+use App\Http\Middleware\EnsureCustomerFullyVerified;
 use App\Http\Middleware\EnsureStaffAccount;
 use App\Http\Middleware\EnsureOrganisationPermission;
 use Illuminate\Http\Request;
@@ -91,15 +98,24 @@ Route::prefix('v1')->group(function () {
         Route::post('/logout', [CustomerController::class, 'logout']);
         Route::post('/verification/{channel}/request', [AccountVerificationController::class, 'requestCustomer'])->middleware('throttle:5,1');
         Route::post('/verification/{channel}/verify', [AccountVerificationController::class, 'verifyCustomer'])->middleware('throttle:10,1');
-        Route::get('/quotations', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'quotation');
-        Route::get('/quotations/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'quotation');
-        Route::get('/quotations/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'quotation');
-        Route::post('/quotations/{commercialDocument}/accept', [CustomerCommercialDocumentController::class, 'accept'])->defaults('type', 'quotation');
-        Route::post('/quotations/{commercialDocument}/decline', [CustomerCommercialDocumentController::class, 'decline'])->defaults('type', 'quotation');
-        Route::get('/invoices', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'invoice');
-        Route::get('/invoices/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'invoice');
-        Route::get('/invoices/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'invoice');
-        Route::get('/credit', [CustomerCreditController::class, 'index']);
+        // Full customer features require a verified email address AND telephone
+        // number; the gate is enforced here so it cannot be bypassed from the UI.
+        Route::middleware(EnsureCustomerFullyVerified::class)->group(function () {
+            Route::get('/quotations', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'quotation');
+            Route::get('/quotations/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'quotation');
+            Route::get('/quotations/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'quotation');
+            Route::post('/quotations/{commercialDocument}/accept', [CustomerCommercialDocumentController::class, 'accept'])->defaults('type', 'quotation');
+            Route::post('/quotations/{commercialDocument}/decline', [CustomerCommercialDocumentController::class, 'decline'])->defaults('type', 'quotation');
+            Route::get('/invoices', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'invoice');
+            Route::get('/invoices/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'invoice');
+            Route::get('/invoices/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'invoice');
+            Route::get('/credit', [CustomerCreditController::class, 'index']);
+            Route::get('/deposits', [CustomerDepositController::class, 'index']);
+            Route::get('/deposits/options', [CustomerDepositController::class, 'options']);
+            Route::post('/deposits', [CustomerDepositController::class, 'store'])->middleware('throttle:10,1');
+            Route::get('/deposits/{reference}', [CustomerDepositController::class, 'show'])->middleware('throttle:60,1');
+            Route::post('/deposits/{reference}/verify', [CustomerDepositController::class, 'verify'])->middleware('throttle:20,1');
+        });
         Route::get('/invitations', [OrganisationInvitationController::class, 'inbox']);
         Route::post('/invitations/{invitation}/accept', [OrganisationInvitationController::class, 'accept']);
 
@@ -356,6 +372,68 @@ Route::prefix('v1')->group(function () {
             Route::post('/applications', [AdminCustomerCreditController::class, 'apply'])->middleware(['permission:financials.customer_credit.manage', 'throttle:20,1']);
         });
 
+        Route::prefix('admin/deposits')->group(function () {
+            Route::get('/', [AdminDepositController::class, 'index'])->middleware('permission:financials.deposits.view,financials.deposits.manage');
+            Route::get('/payers', [AdminDepositController::class, 'payers'])->middleware('permission:financials.deposits.manage');
+            Route::post('/', [AdminDepositController::class, 'store'])->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
+            Route::get('/{deposit}', [AdminDepositController::class, 'show'])->whereNumber('deposit')->middleware('permission:financials.deposits.view,financials.deposits.manage');
+            Route::post('/{deposit}/verify', [AdminDepositController::class, 'verify'])->whereNumber('deposit')->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
+            Route::post('/{deposit}/reject', [AdminDepositController::class, 'reject'])->whereNumber('deposit')->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
+        });
+
+        // Stage 4C: Refunds
+        Route::prefix('admin/financials/refunds')->group(function () {
+            $viewRefunds = 'permission:financials.refunds.view,financials.refunds.initiate,financials.refunds.approve';
+            Route::get('/eligible-payments', [RefundController::class, 'eligiblePayments'])
+                ->middleware('permission:financials.refunds.view,financials.refunds.initiate');
+            Route::get('/', [RefundController::class, 'index'])->middleware($viewRefunds);
+            Route::post('/', [RefundController::class, 'store'])
+                ->middleware(['permission:financials.refunds.initiate', 'throttle:20,1']);
+            Route::get('/{refund}', [RefundController::class, 'show'])->middleware($viewRefunds);
+            Route::post('/{refund}/approve', [RefundController::class, 'approve'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/reject', [RefundController::class, 'reject'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/submit', [RefundController::class, 'submit'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/confirm', [RefundController::class, 'confirm'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/reconcile', [RefundController::class, 'reconcile'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+            Route::post('/{refund}/fail', [RefundController::class, 'fail'])
+                ->middleware(['permission:financials.refunds.approve', 'throttle:20,1']);
+        });
+
+        // Stage 4C: Credit notes
+        Route::prefix('admin/financials/credit-notes')->group(function () {
+            $viewNotes = 'permission:financials.credit_notes.view,financials.credit_notes.create,financials.credit_notes.approve';
+            Route::get('/eligible-invoices', [CreditNoteController::class, 'eligibleInvoices'])
+                ->middleware('permission:financials.credit_notes.view,financials.credit_notes.create');
+            Route::get('/', [CreditNoteController::class, 'index'])->middleware($viewNotes);
+            Route::post('/', [CreditNoteController::class, 'store'])
+                ->middleware(['permission:financials.credit_notes.create', 'throttle:20,1']);
+            Route::get('/{creditNote}', [CreditNoteController::class, 'show'])->middleware($viewNotes);
+            Route::post('/{creditNote}/issue', [CreditNoteController::class, 'issue'])
+                ->middleware(['permission:financials.credit_notes.approve', 'throttle:20,1']);
+            Route::post('/{creditNote}/void', [CreditNoteController::class, 'void'])
+                ->middleware(['permission:financials.credit_notes.approve', 'throttle:20,1']);
+        });
+
+        // Stage 4C: Customer credit reversals
+        Route::prefix('admin/financials/credit-reversals')->group(function () {
+            $viewReversals = 'permission:financials.credit_reversals.view,financials.credit_reversals.initiate,financials.credit_reversals.approve';
+            Route::get('/eligible', [CreditReversalController::class, 'eligible'])
+                ->middleware('permission:financials.credit_reversals.view,financials.credit_reversals.initiate');
+            Route::get('/', [CreditReversalController::class, 'index'])->middleware($viewReversals);
+            Route::get('/{ledgerEntry}/preview', [CreditReversalController::class, 'preview'])->middleware($viewReversals);
+            Route::post('/', [CreditReversalController::class, 'store'])
+                ->middleware(['permission:financials.credit_reversals.initiate', 'throttle:20,1']);
+            Route::post('/{creditReversal}/approve', [CreditReversalController::class, 'approve'])
+                ->middleware(['permission:financials.credit_reversals.approve', 'throttle:20,1']);
+            Route::post('/{creditReversal}/reject', [CreditReversalController::class, 'reject'])
+                ->middleware(['permission:financials.credit_reversals.approve', 'throttle:20,1']);
+        });
+
         // Phase 9: Staff & User Management
         Route::prefix('admin/staff')->group(function () {
             Route::get('/', [AdminStaffController::class, 'index'])
@@ -389,6 +467,26 @@ Route::prefix('v1')->group(function () {
         });
         Route::get('/admin/permissions', [AdminRolePermissionController::class, 'permissions'])
             ->middleware('permission:roles.manage');
+
+        // Customer Support: administrative customer management.
+        // Each capability has its own granular permission; financial figures are
+        // additionally gated behind customers.view_financials.
+        Route::prefix('admin/customers')->group(function () {
+            Route::get('/', [AdminCustomerController::class, 'index'])
+                ->middleware('permission:customers.view');
+            Route::post('/', [AdminCustomerController::class, 'store'])
+                ->middleware(['permission:customers.create', 'throttle:30,1']);
+            Route::get('/{id}', [AdminCustomerController::class, 'show'])
+                ->whereNumber('id')->middleware('permission:customers.view');
+            Route::put('/{id}', [AdminCustomerController::class, 'update'])
+                ->whereNumber('id')->middleware(['permission:customers.update', 'throttle:30,1']);
+            Route::get('/{id}/financials', [AdminCustomerController::class, 'financials'])
+                ->whereNumber('id')->middleware('permission:customers.view_financials');
+            Route::post('/{id}/archive', [AdminCustomerController::class, 'archive'])
+                ->whereNumber('id')->middleware(['permission:customers.archive', 'throttle:20,1']);
+            Route::post('/{id}/restore', [AdminCustomerController::class, 'restore'])
+                ->whereNumber('id')->middleware(['permission:customers.restore', 'throttle:20,1']);
+        });
 
         // Phase 9: Administrative Order Oversight
         Route::prefix('admin/orders')->group(function () {

@@ -23,7 +23,7 @@ export default function PasswordRecoveryPage({ accountType }: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [phoneRequestSent, setPhoneRequestSent] = useState(false);
-  const isReset = Boolean(params.get("token") || params.get("method") === "phone" || challengeId || phoneRequestSent);
+  const isReset = Boolean(params.get("token") || challengeId || phoneRequestSent);
 
   async function requestRecovery(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setMessage("");

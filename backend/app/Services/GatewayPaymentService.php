@@ -2,20 +2,163 @@
 
 namespace App\Services;
 
+use App\Exceptions\ProviderRefundRejected;
+use App\Exceptions\ProviderRefundUnavailable;
+use App\Models\Customer;
 use App\Models\Order;
 use App\Models\PaymentGateway;
+use App\Models\PaymentTransaction;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 class GatewayPaymentService
 {
-    public function __construct(private PaymentTransactionService $transactions) {}
+    private const PROVIDERS = ['paystack', 'hubtel', 'korapay'];
+
+    public function __construct(
+        private PaymentTransactionService $transactions,
+        private DepositReceiptService $deposits,
+    ) {}
 
     public function configuredGateway(): ?PaymentGateway
     {
         $gateway = PaymentGateway::where('is_enabled', true)->where('is_default', true)
             ->whereNotNull('secret_key')->first();
         return $gateway && $this->hasCredentials($gateway) ? $gateway : null;
+    }
+
+    /**
+     * Stage 4C: refund capability. Only Paystack has a documented refund API
+     * among the integrated providers; Hubtel and Korapay collections have no
+     * refund endpoint implemented, so they must use the manual path.
+     */
+    public function supportsRefunds(?string $provider): bool
+    {
+        return $provider === 'paystack';
+    }
+
+    public function refundGatewayFor(?string $provider): ?PaymentGateway
+    {
+        if (! $this->supportsRefunds($provider)) return null;
+
+        return PaymentGateway::query()->where('provider', $provider)
+            ->whereNotNull('secret_key')->orderByDesc('is_default')->first();
+    }
+
+    /**
+     * Submit a refund to Paystack.
+     *
+     * `$idempotencyKey` is sent as Paystack's own refund `reference`, a stable
+     * value derived from the refund reference. Repeating the call with the same
+     * key cannot create a second refund, and the same key can be used to look
+     * the refund up again when the original response was lost.
+     *
+     * @return array{provider:string, provider_refund_reference:?string, provider_status:?string, amount_minor:int, currency:?string, raw:array}
+     *
+     * @throws ProviderRefundRejected when the provider definitively refused the refund
+     * @throws ProviderRefundUnavailable when the provider's outcome is unknown
+     */
+    public function initiateRefund(PaymentTransaction $payment, string $amount, string $refundReference, string $idempotencyKey): array
+    {
+        $gateway = $this->refundGatewayFor($payment->provider);
+        if (! $gateway) throw new ProviderRefundUnavailable(new RuntimeException('Refund credentials are not configured for this payment provider.'));
+
+        $minor = PaymentAllocationService::toMinorUnits($amount);
+        try {
+            $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
+                ->post('https://api.paystack.co/refund', [
+                    'transaction' => $payment->provider_reference ?: $payment->transaction_reference,
+                    'amount' => $minor,
+                    'reference' => $idempotencyKey,
+                    'merchant_note' => 'Refund '.$refundReference,
+                ]);
+        } catch (ConnectionException $exception) {
+            // Timeout or connection loss: the provider may have accepted it.
+            throw ProviderRefundUnavailable::from($exception);
+        }
+
+        // 5xx and 409 (duplicate reference) leave the outcome unknown.
+        if ($response->serverError() || $response->status() === 409) {
+            throw ProviderRefundUnavailable::from(new RuntimeException('The payment provider did not confirm the refund request.'));
+        }
+        if (! $response->successful() || ! data_get($response->json(), 'status')) {
+            throw ProviderRefundRejected::from(new RuntimeException('The payment provider rejected the refund request.'));
+        }
+
+        $data = $response->json('data') ?? [];
+        if (isset($data['reference']) && (string) $data['reference'] !== $idempotencyKey) {
+            // A refund came back that is not the one we asked for: do not claim success.
+            throw ProviderRefundUnavailable::from(new RuntimeException('The provider returned a different refund reference.'));
+        }
+
+        return [
+            'provider' => 'paystack',
+            'provider_refund_reference' => isset($data['id']) ? (string) $data['id'] : null,
+            'provider_status' => $data['status'] ?? null,
+            'amount_minor' => isset($data['amount']) ? (int) $data['amount'] : $minor,
+            'currency' => $data['currency'] ?? null,
+            'raw' => $data,
+        ];
+    }
+
+    /**
+     * Look a refund up by its stable reference so an unconfirmed submission can
+     * be reconciled without issuing a second refund.
+     *
+     * @return array{provider_refund_reference:?string, provider_status:?string, amount_minor:?int, currency:?string, raw:array}|null
+     */
+    public function findRefundByReference(PaymentTransaction $payment, string $idempotencyKey): ?array
+    {
+        $gateway = $this->refundGatewayFor($payment->provider);
+        if (! $gateway) throw new RuntimeException('Refund credentials are not configured for this payment provider.');
+
+        $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
+            ->get('https://api.paystack.co/refund', ['reference' => $idempotencyKey, 'perPage' => 50]);
+
+        if (! $response->successful() || ! data_get($response->json(), 'status')) {
+            throw new RuntimeException('The payment provider could not list refunds.');
+        }
+
+        $payload = $response->json('data') ?? [];
+        $rows = array_is_list($payload) ? $payload : [$payload];
+        foreach ($rows as $row) {
+            if (isset($row['reference']) && (string) $row['reference'] === $idempotencyKey) {
+                return [
+                    'provider_refund_reference' => isset($row['id']) ? (string) $row['id'] : null,
+                    'provider_status' => $row['status'] ?? null,
+                    'amount_minor' => isset($row['amount']) ? (int) $row['amount'] : null,
+                    'currency' => $row['currency'] ?? null,
+                    'raw' => $row,
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array{provider_status:?string, amount_minor:?int, currency:?string, raw:array}
+     */
+    public function verifyRefund(PaymentTransaction $payment, string $providerRefundReference): array
+    {
+        $gateway = $this->refundGatewayFor($payment->provider);
+        if (! $gateway) throw new RuntimeException('Refund credentials are not configured for this payment provider.');
+
+        $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
+            ->get('https://api.paystack.co/refund/'.rawurlencode($providerRefundReference));
+
+        if (! $response->successful() || ! data_get($response->json(), 'status')) {
+            throw new RuntimeException('The payment provider could not confirm the refund.');
+        }
+
+        $data = $response->json('data') ?? [];
+        return [
+            'provider_status' => $data['status'] ?? null,
+            'amount_minor' => isset($data['amount']) ? (int) $data['amount'] : null,
+            'currency' => $data['currency'] ?? null,
+            'raw' => $data,
+        ];
     }
 
     public function initialize(Order $order): string
@@ -42,9 +185,35 @@ class GatewayPaymentService
         $webhookUrl = rtrim(config('app.url'), '/').'/api/v1/payments/'.$gateway->provider.'/webhook';
         try {
             $checkoutUrl = match ($gateway->provider) {
-                'paystack' => $this->initializePaystack($gateway, $order, $reference, $callbackUrl),
-                'hubtel' => $this->initializeHubtel($gateway, $order, $reference, $callbackUrl, $webhookUrl),
-                'korapay' => $this->initializeKora($gateway, $order, $reference, $callbackUrl, $webhookUrl),
+                'paystack' => $this->initializePaystackCharge(
+                    $gateway,
+                    (string) $order->customer_email,
+                    $this->minorAmount($order),
+                    $reference,
+                    $callbackUrl,
+                    ['order_number' => $order->order_number],
+                ),
+                'hubtel' => $this->initializeHubtelCharge(
+                    $gateway,
+                    (float) $order->total,
+                    'Order '.preg_replace('/[^A-Za-z0-9 -]/', '', $order->order_number),
+                    $callbackUrl,
+                    $webhookUrl,
+                    $reference,
+                    (string) $order->customer_name,
+                    (string) $order->customer_phone,
+                    (string) $order->customer_email,
+                ),
+                'korapay' => $this->initializeKoraCharge(
+                    $gateway,
+                    (float) $order->total,
+                    $reference,
+                    $callbackUrl,
+                    $webhookUrl,
+                    'Restaurant order '.$order->order_number,
+                    (string) $order->customer_name,
+                    (string) $order->customer_email,
+                ),
                 default => throw new RuntimeException('This online payment provider is not supported.'),
             };
         } catch (\Throwable $exception) {
@@ -70,14 +239,88 @@ class GatewayPaymentService
         $gateway = $this->gatewayFor($order);
         if (! $gateway) return $order;
 
-        $providerStatus = match ($gateway->provider) {
-            'paystack' => $this->verifyPaystack($gateway, $order, $reference),
-            'hubtel' => $this->verifyHubtel($gateway, $order, $reference),
-            'korapay' => $this->verifyKora($gateway, $order, $reference),
-            default => null,
-        };
+        $providerStatus = $this->verifyCharge($gateway, $order, $reference);
 
         return $order->fresh()->setAttribute('provider_payment_status', $providerStatus);
+    }
+
+    /** Active gateways a customer can choose for a deposit. */
+    public function availableGateways(): array
+    {
+        return PaymentGateway::query()->where('is_enabled', true)->orderByDesc('is_default')->orderBy('id')->get()
+            ->filter(fn (PaymentGateway $gateway): bool => in_array($gateway->provider, self::PROVIDERS, true) && $this->hasCredentials($gateway))
+            ->map(fn (PaymentGateway $gateway): array => [
+                'id' => $gateway->id, 'provider' => $gateway->provider, 'name' => $gateway->display_name,
+            ])->values()->all();
+    }
+
+    public function depositGateway(int $id): PaymentGateway
+    {
+        $gateway = PaymentGateway::find($id);
+        if (! $gateway || ! $gateway->is_enabled || ! in_array($gateway->provider, self::PROVIDERS, true) || ! $this->hasCredentials($gateway)) {
+            throw new RuntimeException('Choose an available online payment method.');
+        }
+        return $gateway;
+    }
+
+    public function gatewayForDeposit(PaymentTransaction $transaction): ?PaymentGateway
+    {
+        $id = (int) data_get($transaction->metadata, 'gateway_id', 0);
+        $gateway = $id > 0 ? PaymentGateway::find($id) : null;
+        if ($gateway) return $gateway;
+        return PaymentGateway::where('provider', $transaction->provider)->whereNotNull('secret_key')
+            ->orderByDesc('is_default')->first();
+    }
+
+    /** Start a hosted checkout for a standalone deposit receipt. */
+    public function initializeDepositCharge(PaymentTransaction $transaction, PaymentGateway $gateway, Customer $customer): string
+    {
+        if (! $customer->email) throw new RuntimeException('An email address is required for online payment.');
+
+        $reference = $transaction->transaction_reference;
+        $frontendUrl = rtrim(config('app.frontend_url', config('app.url')), '/');
+        $callbackUrl = $frontendUrl.'/account/deposits?reference='.rawurlencode($reference);
+        $webhookUrl = rtrim(config('app.url'), '/').'/api/v1/payments/'.$gateway->provider.'/webhook';
+        $label = 'Deposit '.$reference;
+
+        return match ($gateway->provider) {
+            'paystack' => $this->initializePaystackCharge(
+                $gateway, (string) $customer->email, $this->minorAmountFor($transaction), $reference, $callbackUrl,
+                ['deposit_reference' => $reference, 'payer' => $this->payerReference($transaction)],
+            ),
+            'hubtel' => $this->initializeHubtelCharge(
+                $gateway, (float) $transaction->amount, $label, $callbackUrl, $webhookUrl, $reference,
+                $this->payerName($transaction), (string) $customer->phone, (string) $customer->email,
+            ),
+            'korapay' => $this->initializeKoraCharge(
+                $gateway, (float) $transaction->amount, $reference, $callbackUrl, $webhookUrl, $label,
+                $this->payerName($transaction), (string) $customer->email,
+            ),
+            default => throw new RuntimeException('This online payment provider is not supported.'),
+        };
+    }
+
+    /**
+     * Server-side verification of a deposit charge. Returns the provider status.
+     * A deposit only completes when the provider confirms the exact reference,
+     * amount and currency that this application created.
+     */
+    public function verifyDepositCharge(PaymentTransaction $transaction): ?string
+    {
+        $gateway = $this->gatewayForDeposit($transaction);
+        if (! $gateway) return null;
+
+        $charge = $this->fetchCharge($gateway, $transaction->transaction_reference);
+        if ($charge['paid']
+            && $charge['reference'] === $transaction->transaction_reference
+            && $charge['currency'] === 'GHS'
+            && $charge['amount_minor'] === $this->minorAmountFor($transaction)) {
+            $this->completeDeposit($transaction, $charge['provider_reference']);
+        } elseif (in_array($charge['status'], ['failed', 'cancelled'], true)) {
+            $this->deposits->fail($transaction, $charge['status']);
+        }
+
+        return $charge['status'];
     }
 
     public function consumeWebhook(string $provider, string $payload, string $signature, string $paystackSignature = ''): bool
@@ -89,7 +332,8 @@ class GatewayPaymentService
             $data = $body['data'] ?? [];
             $reference = $data['reference'] ?? null;
             $order = is_string($reference) ? Order::where('payment_reference', $reference)->first() : null;
-            $gateway = $order ? $this->gatewayFor($order) : null;
+            $deposit = ! $order && is_string($reference) ? $this->depositTransaction($reference) : null;
+            $gateway = $order ? $this->gatewayFor($order) : ($deposit ? $this->gatewayForDeposit($deposit) : null);
             // Legacy references can predate payment_gateway_id. Fall back to the
             // configured Paystack account only for those historical orders.
             if (! $gateway && $order && ! $order->payment_gateway_id) {
@@ -98,6 +342,20 @@ class GatewayPaymentService
             }
             if (! $gateway || $gateway->provider !== 'paystack'
                 || ! $this->validPaystackWebhookSignature($gateway, $payload, $signature, $paystackSignature)) return false;
+
+            if ($deposit) {
+                if (($body['event'] ?? null) === 'charge.failed') {
+                    $this->deposits->fail($deposit, 'failed');
+                    return true;
+                }
+                if (($body['event'] ?? null) !== 'charge.success') return true;
+                if (($data['status'] ?? null) === 'success'
+                    && ($data['currency'] ?? null) === 'GHS'
+                    && (int) ($data['amount'] ?? 0) === $this->minorAmountFor($deposit)) {
+                    $this->completeDeposit($deposit, isset($data['id']) ? (string) $data['id'] : null);
+                }
+                return true;
+            }
 
             if (($body['event'] ?? null) === 'charge.failed' && $order) {
                 $this->transactions->recordGatewayStatus($order, 'failed', isset($data['id']) ? (string) $data['id'] : null);
@@ -118,7 +376,8 @@ class GatewayPaymentService
             if (! is_array($data)) return false;
             $reference = $data['reference'] ?? $data['payment_reference'] ?? null;
             $order = is_string($reference) ? Order::where('payment_reference', $reference)->first() : null;
-            $gateway = $order ? $this->gatewayFor($order) : null;
+            $deposit = ! $order && is_string($reference) ? $this->depositTransaction($reference) : null;
+            $gateway = $order ? $this->gatewayFor($order) : ($deposit ? $this->gatewayForDeposit($deposit) : null);
             if (! $gateway || $gateway->provider !== 'korapay') return true;
 
             // Kora signs the JSON encoding of the data object. Match PHP's
@@ -129,13 +388,25 @@ class GatewayPaymentService
             if (! hash_equals($expected, $signature)) return false;
 
             $event = is_array($body['event'] ?? null) ? ($body['event']['type'] ?? null) : ($body['event'] ?? null);
-            if (in_array($event, ['charge.failed', 'charge.cancelled'], true) && $order) {
-                $this->transactions->recordGatewayStatus($order, $event === 'charge.cancelled' ? 'cancelled' : 'failed', isset($data['reference']) ? (string) $data['reference'] : null);
+            if (in_array($event, ['charge.failed', 'charge.cancelled'], true)) {
+                if ($deposit) {
+                    $this->deposits->fail($deposit, $event === 'charge.cancelled' ? 'cancelled' : 'failed');
+                    return true;
+                }
+                if ($order) {
+                    $this->transactions->recordGatewayStatus($order, $event === 'charge.cancelled' ? 'cancelled' : 'failed', isset($data['reference']) ? (string) $data['reference'] : null);
+                }
                 return true;
             }
             if ($event === 'charge.success' && ($data['status'] ?? null) === 'success'
-                && ($data['currency'] ?? null) === 'GHS' && $this->majorAmountMatches($data['amount'] ?? null, $order)) {
-                $this->markPaid($order, isset($data['transaction_id']) ? (string) $data['transaction_id'] : (isset($data['reference']) ? (string) $data['reference'] : null));
+                && ($data['currency'] ?? null) === 'GHS'
+                && $this->majorAmountMatches($data['amount'] ?? null, $deposit ?: $order)) {
+                $providerReference = isset($data['transaction_id']) ? (string) $data['transaction_id'] : (isset($data['reference']) ? (string) $data['reference'] : null);
+                if ($deposit) {
+                    $this->completeDeposit($deposit, $providerReference);
+                } else {
+                    $this->markPaid($order, $providerReference);
+                }
             }
             return true;
         }
@@ -145,27 +416,34 @@ class GatewayPaymentService
             $reference = data_get($data, 'clientReference') ?? data_get($data, 'ClientReference');
             if (! is_string($reference) || $reference === '') return true;
             $order = Order::where('payment_reference', $reference)->first();
-            if (! $order || $this->gatewayFor($order)?->provider !== 'hubtel') return true;
-            // Hubtel's online checkout callback is reconciled against its authenticated
-            // transaction-status API before the order can be marked paid.
-            $this->verifyHubtel($this->gatewayFor($order), $order, $reference);
+            if ($order) {
+                if ($this->gatewayFor($order)?->provider !== 'hubtel') return true;
+                // Hubtel's online checkout callback is reconciled against its authenticated
+                // transaction-status API before the order can be marked paid.
+                $this->verifyHubtel($this->gatewayFor($order), $order, $reference);
+                return true;
+            }
+            $deposit = $this->depositTransaction($reference);
+            if ($deposit && $this->gatewayForDeposit($deposit)?->provider === 'hubtel') {
+                $this->verifyDepositCharge($deposit);
+            }
             return true;
         }
 
         return false;
     }
 
-    private function initializePaystack(PaymentGateway $gateway, Order $order, string $reference, string $callbackUrl): string
+    private function initializePaystackCharge(PaymentGateway $gateway, string $email, int $amountMinor, string $reference, string $callbackUrl, array $metadata): string
     {
         $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
             ->post('https://api.paystack.co/transaction/initialize', [
-                'email' => $order->customer_email,
-                'amount' => $this->minorAmount($order),
+                'email' => $email,
+                'amount' => $amountMinor,
                 'currency' => 'GHS',
                 'reference' => $reference,
                 'callback_url' => $callbackUrl,
                 'channels' => ['card', 'mobile_money', 'bank', 'bank_transfer', 'ussd'],
-                'metadata' => ['order_number' => $order->order_number],
+                'metadata' => $metadata,
             ]);
         $body = $response->json();
         $url = data_get($body, 'data.authorization_url');
@@ -175,20 +453,20 @@ class GatewayPaymentService
         return $url;
     }
 
-    private function initializeHubtel(PaymentGateway $gateway, Order $order, string $reference, string $callbackUrl, string $webhookUrl): string
+    private function initializeHubtelCharge(PaymentGateway $gateway, float $amount, string $description, string $callbackUrl, string $webhookUrl, string $reference, string $payeeName, string $payeeMobile, string $payeeEmail): string
     {
         $response = Http::withBasicAuth($gateway->public_key, $gateway->secret_key)->acceptJson()->timeout(20)
             ->post('https://payproxyapi.hubtel.com/items/initiate', [
-                'totalAmount' => (float) $order->total,
-                'description' => 'Order '.preg_replace('/[^A-Za-z0-9 -]/', '', $order->order_number),
+                'totalAmount' => $amount,
+                'description' => $description,
                 'callbackUrl' => $webhookUrl,
                 'returnUrl' => $callbackUrl,
                 'cancellationUrl' => $callbackUrl,
                 'merchantAccountNumber' => data_get($gateway->configuration, 'collection_account_number'),
                 'clientReference' => $reference,
-                'payeeName' => $order->customer_name,
-                'payeeMobileNumber' => $order->customer_phone,
-                'payeeEmail' => $order->customer_email,
+                'payeeName' => $payeeName,
+                'payeeMobileNumber' => $payeeMobile,
+                'payeeEmail' => $payeeEmail,
             ]);
         $body = $response->json();
         $url = data_get($body, 'data.checkoutUrl');
@@ -198,18 +476,18 @@ class GatewayPaymentService
         return $url;
     }
 
-    private function initializeKora(PaymentGateway $gateway, Order $order, string $reference, string $callbackUrl, string $webhookUrl): string
+    private function initializeKoraCharge(PaymentGateway $gateway, float $amount, string $reference, string $callbackUrl, string $webhookUrl, string $narration, string $customerName, string $customerEmail): string
     {
         $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
             ->post('https://api.korapay.com/merchant/api/v1/charges/initialize', [
-                'amount' => (float) $order->total,
+                'amount' => $amount,
                 'currency' => 'GHS',
                 'reference' => $reference,
                 'redirect_url' => $callbackUrl,
                 'notification_url' => $webhookUrl,
-                'narration' => 'Restaurant order '.$order->order_number,
+                'narration' => $narration,
                 'channels' => ['mobile_money', 'card', 'bank_transfer'],
-                'customer' => ['name' => $order->customer_name, 'email' => $order->customer_email],
+                'customer' => ['name' => $customerName, 'email' => $customerEmail],
             ]);
         $body = $response->json();
         $url = data_get($body, 'data.checkout_url');
@@ -219,54 +497,167 @@ class GatewayPaymentService
         return $url;
     }
 
+    private function verifyCharge(PaymentGateway $gateway, Order $order, string $reference): ?string
+    {
+        return match ($gateway->provider) {
+            'paystack' => $this->verifyPaystack($gateway, $order, $reference),
+            'hubtel' => $this->verifyHubtel($gateway, $order, $reference),
+            'korapay' => $this->verifyKora($gateway, $order, $reference),
+            default => null,
+        };
+    }
+
     private function verifyPaystack(PaymentGateway $gateway, Order $order, string $reference): ?string
+    {
+        $charge = $this->fetchCharge($gateway, $reference);
+        if ($charge['paid'] && $charge['reference'] === $reference
+            && $charge['currency'] === 'GHS'
+            && $charge['amount_minor'] === $this->minorAmount($order)) {
+            $this->markPaid($order, $charge['provider_reference']);
+        } elseif (in_array($charge['status'], ['failed', 'cancelled'], true)) {
+            $this->transactions->recordGatewayStatus($order, $charge['status'], $charge['provider_reference']);
+        }
+        return $charge['status'];
+    }
+
+    private function verifyHubtel(PaymentGateway $gateway, Order $order, string $reference): ?string
+    {
+        $charge = $this->fetchCharge($gateway, $reference);
+        if ($charge['paid'] && $charge['reference'] === $reference
+            && $charge['currency'] === 'GHS'
+            && $charge['amount_minor'] === $this->minorAmount($order)) {
+            $this->markPaid($order, $charge['provider_reference']);
+        } elseif (in_array($charge['status'], ['failed', 'cancelled'], true)) {
+            $this->transactions->recordGatewayStatus($order, $charge['status'], $reference);
+        }
+        return $charge['status'];
+    }
+
+    private function verifyKora(PaymentGateway $gateway, Order $order, string $reference): ?string
+    {
+        $charge = $this->fetchCharge($gateway, $reference);
+        if ($charge['paid'] && $charge['reference'] === $reference
+            && $charge['currency'] === 'GHS'
+            && $charge['amount_minor'] === $this->minorAmount($order)) {
+            $this->markPaid($order, $charge['provider_reference']);
+        } elseif (in_array($charge['status'], ['failed', 'cancelled'], true)) {
+            $this->transactions->recordGatewayStatus($order, $charge['status'], $reference);
+        }
+        return $charge['status'];
+    }
+
+    /**
+     * Fetch a provider charge and normalise it for both order and deposit
+     * verification: provider status, exact reference, currency and the amount
+     * in minor units.
+     *
+     * @return array{status: ?string, paid: bool, reference: ?string, currency: ?string, amount_minor: ?int, provider_reference: ?string}
+     */
+    private function fetchCharge(PaymentGateway $gateway, string $reference): array
+    {
+        return match ($gateway->provider) {
+            'paystack' => $this->fetchPaystackCharge($gateway, $reference),
+            'hubtel' => $this->fetchHubtelCharge($gateway, $reference),
+            'korapay' => $this->fetchKoraCharge($gateway, $reference),
+            default => $this->emptyCharge(),
+        };
+    }
+
+    private function fetchPaystackCharge(PaymentGateway $gateway, string $reference): array
     {
         $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
             ->get('https://api.paystack.co/transaction/verify/'.rawurlencode($reference));
         $body = $response->json();
         $data = data_get($body, 'data', []);
-        if ($response->successful() && data_get($body, 'status') && data_get($data, 'status') === 'success'
-            && data_get($data, 'reference') === $reference && data_get($data, 'currency') === 'GHS'
-            && (int) data_get($data, 'amount') === $this->minorAmount($order)) $this->markPaid($order, isset($data['id']) ? (string) $data['id'] : null);
-        elseif ($response->successful() && in_array(strtolower((string) data_get($data, 'status')), ['failed', 'cancelled'], true)) {
-            $this->transactions->recordGatewayStatus($order, strtolower((string) data_get($data, 'status')), isset($data['id']) ? (string) $data['id'] : null);
-        }
-        return is_string(data_get($data, 'status')) ? data_get($data, 'status') : null;
+        $status = is_string(data_get($data, 'status')) ? strtolower((string) data_get($data, 'status')) : null;
+
+        return [
+            'status' => $status,
+            'paid' => $response->successful() && (bool) data_get($body, 'status') && $status === 'success',
+            'reference' => is_string(data_get($data, 'reference')) ? data_get($data, 'reference') : null,
+            'currency' => is_string(data_get($data, 'currency')) ? strtoupper((string) data_get($data, 'currency')) : null,
+            'amount_minor' => is_numeric(data_get($data, 'amount')) ? (int) data_get($data, 'amount') : null,
+            'provider_reference' => isset($data['id']) ? (string) $data['id'] : null,
+        ];
     }
 
-    private function verifyHubtel(PaymentGateway $gateway, Order $order, string $reference): ?string
+    private function fetchHubtelCharge(PaymentGateway $gateway, string $reference): array
     {
         $account = (string) data_get($gateway->configuration, 'collection_account_number', '');
-        if ($account === '') return null;
+        if ($account === '') return $this->emptyCharge();
+
         $response = Http::withBasicAuth($gateway->public_key, $gateway->secret_key)->acceptJson()->timeout(20)
             ->get('https://api-txnstatus.hubtel.com/transactions/'.rawurlencode($account).'/status', ['clientReference' => $reference]);
         $body = $response->json();
         $data = data_get($body, 'data', []);
-        if ($response->successful() && (data_get($body, 'responseCode') === '0000' || data_get($body, 'message') === 'Successful')
-            && strtolower((string) data_get($data, 'status')) === 'paid'
-            && data_get($data, 'clientReference') === $reference
-            && $this->currencyMatches(data_get($data, 'currencyCode'))
-            && $this->majorAmountMatches(data_get($data, 'amount'), $order)) $this->markPaid($order, isset($data['transactionId']) ? (string) $data['transactionId'] : null);
-        elseif ($response->successful() && in_array(strtolower((string) data_get($data, 'status')), ['failed', 'cancelled'], true)) {
-            $this->transactions->recordGatewayStatus($order, strtolower((string) data_get($data, 'status')), $reference);
-        }
-        $status = data_get($data, 'status');
-        return is_string($status) ? strtolower($status) : null;
+        $status = is_string(data_get($data, 'status')) ? strtolower((string) data_get($data, 'status')) : null;
+        $currency = data_get($data, 'currencyCode');
+        $successful = $response->successful() && (data_get($body, 'responseCode') === '0000' || data_get($body, 'message') === 'Successful');
+
+        return [
+            'status' => $status,
+            'paid' => $successful && $status === 'paid',
+            'reference' => is_string(data_get($data, 'clientReference')) ? data_get($data, 'clientReference') : null,
+            // Hubtel may omit currencyCode for GHS collection status checks.
+            'currency' => ($currency === null || $currency === '') ? 'GHS' : strtoupper((string) $currency),
+            'amount_minor' => is_numeric(data_get($data, 'amount')) ? (int) round((float) data_get($data, 'amount') * 100) : null,
+            'provider_reference' => isset($data['transactionId']) ? (string) $data['transactionId'] : null,
+        ];
     }
 
-    private function verifyKora(PaymentGateway $gateway, Order $order, string $reference): ?string
+    private function fetchKoraCharge(PaymentGateway $gateway, string $reference): array
     {
         $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
             ->get('https://api.korapay.com/merchant/api/v1/charges/'.rawurlencode($reference));
         $body = $response->json();
         $data = data_get($body, 'data', []);
-        if ($response->successful() && data_get($body, 'status') && data_get($data, 'status') === 'success'
-            && data_get($data, 'reference') === $reference && data_get($data, 'currency') === 'GHS'
-            && $this->majorAmountMatches(data_get($data, 'amount'), $order)) $this->markPaid($order, isset($data['reference']) ? (string) $data['reference'] : null);
-        elseif ($response->successful() && in_array(strtolower((string) data_get($data, 'status')), ['failed', 'cancelled'], true)) {
-            $this->transactions->recordGatewayStatus($order, strtolower((string) data_get($data, 'status')), $reference);
-        }
-        return is_string(data_get($data, 'status')) ? data_get($data, 'status') : null;
+        $status = is_string(data_get($data, 'status')) ? strtolower((string) data_get($data, 'status')) : null;
+
+        return [
+            'status' => $status,
+            'paid' => $response->successful() && (bool) data_get($body, 'status') && $status === 'success',
+            'reference' => is_string(data_get($data, 'reference')) ? data_get($data, 'reference') : null,
+            'currency' => is_string(data_get($data, 'currency')) ? strtoupper((string) data_get($data, 'currency')) : null,
+            'amount_minor' => is_numeric(data_get($data, 'amount')) ? (int) round((float) data_get($data, 'amount') * 100) : null,
+            'provider_reference' => isset($data['transaction_id']) ? (string) $data['transaction_id']
+                : (is_string(data_get($data, 'reference')) ? data_get($data, 'reference') : null),
+        ];
+    }
+
+    private function emptyCharge(): array
+    {
+        return ['status' => null, 'paid' => false, 'reference' => null, 'currency' => null, 'amount_minor' => null, 'provider_reference' => null];
+    }
+
+    private function depositTransaction(string $reference): ?PaymentTransaction
+    {
+        return PaymentTransaction::query()
+            ->where('transaction_reference', $reference)
+            ->whereNull('order_id')
+            ->where('payment_purpose', 'invoice')
+            ->first();
+    }
+
+    private function completeDeposit(PaymentTransaction $transaction, ?string $providerReference): void
+    {
+        $intent = (string) data_get($transaction->metadata, 'intent', 'deposit');
+        $this->deposits->complete($transaction, $intent, null, [
+            'name' => $this->payerName($transaction),
+            'reference' => $this->payerReference($transaction),
+            'reason' => 'Online '.$intent.' confirmed by '.($transaction->provider ?: 'gateway').' verification.',
+        ], $providerReference);
+    }
+
+    private function payerName(PaymentTransaction $transaction): string
+    {
+        return (string) ($transaction->customer?->name ?? $transaction->organisation?->name ?? 'Deposit payer');
+    }
+
+    private function payerReference(PaymentTransaction $transaction): string
+    {
+        return $transaction->organisation_id !== null
+            ? 'organisation:'.$transaction->organisation_id
+            : 'customer:'.$transaction->customer_id;
     }
 
     private function gatewayFor(Order $order): ?PaymentGateway
@@ -308,15 +699,16 @@ class GatewayPaymentService
         return (int) round((float) $order->total * 100);
     }
 
-    private function majorAmountMatches(mixed $amount, Order $order): bool
+    private function minorAmountFor(PaymentTransaction $transaction): int
     {
-        return is_numeric($amount) && (int) round((float) $amount * 100) === $this->minorAmount($order);
+        return (int) round((float) $transaction->amount * 100);
     }
 
-    private function currencyMatches(mixed $currency): bool
+    private function majorAmountMatches(mixed $amount, Order|PaymentTransaction|null $subject): bool
     {
-        // Hubtel may return currencyCode=null for GHS collection status checks.
-        return $currency === null || $currency === '' || strtoupper((string) $currency) === 'GHS';
+        if (! $subject || ! is_numeric($amount)) return false;
+        $expected = $subject instanceof Order ? $this->minorAmount($subject) : $this->minorAmountFor($subject);
+        return (int) round((float) $amount * 100) === $expected;
     }
 
     private function hasCredentials(PaymentGateway $gateway): bool

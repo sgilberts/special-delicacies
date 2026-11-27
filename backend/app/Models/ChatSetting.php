@@ -15,7 +15,13 @@ class ChatSetting extends Model
 
     public static function current(): self
     {
-        return static::query()->firstOrCreate(['id' => 1], [
+        // `id` is guarded, so `firstOrCreate(['id' => 1], …)` never inserts the
+        // requested id: it auto-increments instead. Once the auto-increment
+        // counter moves past 1 (a rolled-back transaction, a deleted settings
+        // row, a restored dump), every call created ANOTHER default row and the
+        // configured capacity/eligibility settings were silently ignored.
+        // Resolve the single settings row by existence, never by a fixed id.
+        return static::query()->orderBy('id')->first() ?? static::query()->create([
             'widget_enabled' => true,
             'accepting_conversations' => true,
             'eligible_role_ids' => null,

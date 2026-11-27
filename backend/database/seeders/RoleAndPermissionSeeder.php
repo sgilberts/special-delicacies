@@ -247,6 +247,15 @@ class RoleAndPermissionSeeder extends Seeder
             ['name' => 'Manage Customer Credit', 'slug' => 'financials.customer_credit.manage', 'description' => 'Designate eligible receipts as credit and apply credit to invoices'],
             ['name' => 'View Invoice Payment Balances', 'slug' => 'financials.invoice_balances.view', 'description' => 'View derived invoice payment balances'],
             ['name' => 'Confirm Cash Payments', 'slug' => 'financials.payments.confirm_cash', 'description' => 'Confirm cash collection for an order'],
+            ['name' => 'View Refunds', 'slug' => 'financials.refunds.view', 'description' => 'View refund requests, provider status and refund history'],
+            ['name' => 'Initiate Refunds', 'slug' => 'financials.refunds.initiate', 'description' => 'Request a refund against an eligible payment receipt'],
+            ['name' => 'Approve Refunds', 'slug' => 'financials.refunds.approve', 'description' => 'Approve, submit and confirm or reject refund requests'],
+            ['name' => 'View Credit Notes', 'slug' => 'financials.credit_notes.view', 'description' => 'View credit notes and their originating invoices'],
+            ['name' => 'Create Credit Notes', 'slug' => 'financials.credit_notes.create', 'description' => 'Create draft credit notes against eligible invoices'],
+            ['name' => 'Approve Credit Notes', 'slug' => 'financials.credit_notes.approve', 'description' => 'Issue or void a draft credit note'],
+            ['name' => 'View Credit Reversals', 'slug' => 'financials.credit_reversals.view', 'description' => 'View customer credit reversal requests and history'],
+            ['name' => 'Initiate Credit Reversals', 'slug' => 'financials.credit_reversals.initiate', 'description' => 'Request a reversal of unspent customer credit'],
+            ['name' => 'Approve Credit Reversals', 'slug' => 'financials.credit_reversals.approve', 'description' => 'Approve or reject a customer credit reversal'],
             ['name' => 'View Commercial Documents', 'slug' => 'commercial_documents.view', 'description' => 'View quotations and invoices'],
             ['name' => 'Manage Commercial Documents', 'slug' => 'commercial_documents.manage', 'description' => 'Create and edit draft quotations and invoices'],
             ['name' => 'Issue Commercial Documents', 'slug' => 'commercial_documents.issue', 'description' => 'Issue quotations and invoices'],
@@ -261,6 +270,15 @@ class RoleAndPermissionSeeder extends Seeder
             ['name' => 'Delete Chat Messages', 'slug' => 'chat.delete_message', 'description' => 'Tombstone messages while preserving audit evidence'],
             ['name' => 'Manage Chat Settings', 'slug' => 'chat.manage_settings', 'description' => 'Manage chat availability and assignment settings'],
             ['name' => 'View Chat Audit Logs', 'slug' => 'chat.view_audit_logs', 'description' => 'Review conversation audit history'],
+
+            // Customer support / customer management. Granted explicitly per
+            // role in Roles & Permissions; never handed to every administrator.
+            ['name' => 'View Customers', 'slug' => 'customers.view', 'description' => 'View customer records and customer profiles'],
+            ['name' => 'Create Customers', 'slug' => 'customers.create', 'description' => 'Create customer records from the admin portal'],
+            ['name' => 'Update Customers', 'slug' => 'customers.update', 'description' => 'Edit customer profile and contact details'],
+            ['name' => 'Archive Customers', 'slug' => 'customers.archive', 'description' => 'Archive a customer while preserving financial and audit history'],
+            ['name' => 'Restore Customers', 'slug' => 'customers.restore', 'description' => 'Restore an archived customer to active status'],
+            ['name' => 'View Customer Financials', 'slug' => 'customers.view_financials', 'description' => 'View a customer\'s payments, deposits, invoices, refunds and credit balance'],
         ];
 
         $permissionModels = [];
@@ -283,7 +301,17 @@ class RoleAndPermissionSeeder extends Seeder
                 'name' => 'Admin',
                 'slug' => 'admin',
                 'description' => 'Restaurant administrator; access is controlled by assigned permissions.',
-                'permissions' => array_values(array_filter(array_keys($permissionModels), fn ($slug) => ! str_starts_with($slug, 'financials.') && ! str_starts_with($slug, 'chat.') && $slug !== 'reverb.monitor')),
+                // Customer management is granted explicitly per role in Roles &
+                // Permissions, never to every administrator by default. The
+                // migration that creates these permissions grants them to
+                // super-admin only, so a re-seed never silently removes a grant.
+                'permissions' => array_values(array_filter(
+                    array_keys($permissionModels),
+                    fn ($slug) => ! str_starts_with($slug, 'financials.')
+                        && ! str_starts_with($slug, 'chat.')
+                        && ! str_starts_with($slug, 'customers.')
+                        && $slug !== 'reverb.monitor'
+                )),
             ],
             'waiter-waitress' => [
                 'name' => 'Waiter/Waitress',

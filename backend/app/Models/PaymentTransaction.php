@@ -64,4 +64,9 @@ class PaymentTransaction extends Model
     {
         return $this->hasOne(PaymentReceiptIntent::class);
     }
+
+    public function staffDepositRecord(): HasOne
+    {
+        return $this->hasOne(StaffDepositRecord::class);
+    }
 }

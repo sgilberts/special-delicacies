@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
-    'document_number', 'document_type', 'status', 'customer_id', 'organisation_id', 'issue_date', 'expiry_date',
+    'document_number', 'document_type', 'related_document_id', 'status', 'customer_id', 'organisation_id', 'issue_date', 'expiry_date',
     'currency', 'subtotal', 'discount_amount', 'discount_description', 'tax_amount', 'total', 'notes', 'terms',
     'created_by', 'updated_by', 'issued_by', 'issued_at', 'accepted_at', 'declined_at', 'cancelled_at',
     'voided_at', 'void_reason',
@@ -17,6 +17,7 @@ class CommercialDocument extends Model
 {
     public const TYPE_QUOTATION = 'quotation';
     public const TYPE_INVOICE = 'invoice';
+    public const TYPE_CREDIT_NOTE = 'credit_note';
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_ISSUED = 'issued';
@@ -48,6 +49,8 @@ class CommercialDocument extends Model
     public function creator(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
     public function updater(): BelongsTo { return $this->belongsTo(User::class, 'updated_by'); }
     public function issuer(): BelongsTo { return $this->belongsTo(User::class, 'issued_by'); }
+    public function relatedDocument(): BelongsTo { return $this->belongsTo(self::class, 'related_document_id'); }
+    public function creditNotes(): HasMany { return $this->hasMany(self::class, 'related_document_id'); }
     public function lines(): HasMany { return $this->hasMany(CommercialDocumentLine::class)->orderBy('position'); }
     public function histories(): HasMany { return $this->hasMany(CommercialDocumentHistory::class)->orderBy('created_at')->orderBy('id'); }
 }

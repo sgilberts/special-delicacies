@@ -27,7 +27,7 @@ class CustomerCreditService
                 $payer->where(fn (Builder $q) => $q->whereNotNull('customer_id')->whereNull('organisation_id'))
                     ->orWhere(fn (Builder $q) => $q->whereNull('customer_id')->whereNotNull('organisation_id'));
             })
-            ->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type = 'designation'), 0)")
+            ->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type = 'designation'), 0) - COALESCE((SELECT SUM(rev.amount) FROM customer_credit_ledger_entries rev JOIN customer_credit_ledger_entries orig ON orig.id = rev.reverses_entry_id WHERE orig.source_payment_transaction_id = payment_transactions.id AND orig.entry_type = 'designation' AND rev.entry_type = 'reversal'), 0)")
             ->orderByDesc('received_at')->orderByDesc('id');
 
         if (filled($filters['search'] ?? null)) {
@@ -78,6 +78,11 @@ class CustomerCreditService
                 if ($existing->intent === $intent && $existing->operation_reference === $operationReference
                     && trim($existing->reason) === trim($reason) && (int) $existing->actor_user_id === (int) $actor->id) return $existing;
                 throw new DomainException('This receipt already has a deposit or advance designation.');
+            }
+            // operation_reference is unique across all receipt intents; reject a
+            // reference reused by another receipt instead of surfacing a database error.
+            if (PaymentReceiptIntent::query()->where('operation_reference', $operationReference)->exists()) {
+                throw new DomainException('This operation reference was already used for another receipt designation.');
             }
             return PaymentReceiptIntent::query()->create([
                 'payment_transaction_id' => $payment->id, 'intent' => $intent,
@@ -155,9 +160,15 @@ class CustomerCreditService
     {
         $base = CustomerCreditLedgerEntry::query()->where('currency', $currency);
         $payer instanceof Customer ? $base->where('customer_id', $payer->id)->whereNull('organisation_id') : $base->where('organisation_id', $payer->id)->whereNull('customer_id');
-        $credit = (clone $base)->where('entry_type', CustomerCreditLedgerEntry::TYPE_DESIGNATION)->sum('amount');
-        $used = (clone $base)->where('entry_type', CustomerCreditLedgerEntry::TYPE_APPLICATION)->sum('amount');
+        $credit = (clone $base)->whereIn('entry_type', CustomerCreditLedgerEntry::CREDIT_TYPES)->sum('amount');
+        $used = (clone $base)->whereIn('entry_type', CustomerCreditLedgerEntry::DEBIT_TYPES)->sum('amount');
         return PaymentAllocationService::toMinorUnits((string) ($credit ?: '0')) - PaymentAllocationService::toMinorUnits((string) ($used ?: '0'));
+    }
+
+    /** Expose the canonical derived balance to other Stage 4C services. */
+    public function currentBalanceMinor(Customer|Organisation $payer, string $currency, bool $forUpdate = false): int
+    {
+        return $this->creditBalanceMinor($payer, $currency, $forUpdate);
     }
 
     public function customerCreditView(Customer $customer, array $organisationIds = []): array
@@ -177,7 +188,7 @@ class CustomerCreditService
 
     public function staffLedger(array $filters = [])
     {
-        $query = CustomerCreditLedgerEntry::query()->with(['customer:id,name,email,phone', 'organisation:id,name,reference', 'sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'actor:id,name'])
+        $query = CustomerCreditLedgerEntry::query()->with(['customer:id,name,email,phone', 'organisation:id,name,reference', 'sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'reversesEntry:id,operation_reference', 'actor:id,name'])
             ->latest('created_at')->latest('id');
         if (isset($filters['customer_id'])) $query->where('customer_id', $filters['customer_id']);
         if (isset($filters['organisation_id'])) $query->where('organisation_id', $filters['organisation_id']);
@@ -206,7 +217,7 @@ class CustomerCreditService
 
     private function ledgerQuery(?Customer $customer, ?Organisation $organisation)
     {
-        $query = CustomerCreditLedgerEntry::query()->with(['sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'actor:id,name'])->latest('created_at')->latest('id');
+        $query = CustomerCreditLedgerEntry::query()->with(['sourcePayment:id,transaction_reference', 'commercialDocument:id,document_number', 'reversesEntry:id,operation_reference', 'actor:id,name'])->latest('created_at')->latest('id');
         $customer ? $query->where('customer_id', $customer->id)->whereNull('organisation_id') : $query->where('organisation_id', $organisation?->id)->whereNull('customer_id');
         return $query;
     }
@@ -235,6 +246,10 @@ class CustomerCreditService
             'source_reference' => $entry->sourcePayment?->transaction_reference,
             'invoice_number' => $entry->commercialDocument?->document_number,
             'actor' => $entry->actor_name_snapshot ?: $entry->actor?->name ?: 'Unknown / unavailable',
+            'reverses_entry_id' => $entry->reverses_entry_id,
+            'reversal_of_reference' => $entry->reversesEntry?->operation_reference,
+            'authorized_by' => $entry->authorized_by_name_snapshot ?: $entry->authorizedBy?->name,
+            'authorized_at' => $entry->authorized_at,
             'credit_balance_before' => $entry->credit_balance_before, 'credit_balance_after' => $entry->credit_balance_after,
         ];
     }
@@ -294,14 +309,14 @@ class CustomerCreditService
             $applications = 0;
             foreach ($query->orderBy('id')->lockForUpdate()->get(['entry_type', 'amount']) as $entry) {
                 $minor = PaymentAllocationService::toMinorUnits((string) $entry->amount);
-                $entry->entry_type === CustomerCreditLedgerEntry::TYPE_DESIGNATION
+                in_array($entry->entry_type, CustomerCreditLedgerEntry::CREDIT_TYPES, true)
                     ? $credits += $minor
                     : $applications += $minor;
             }
             return $credits - $applications;
         }
-        $credits = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_DESIGNATION)->sum('amount');
-        $applications = (clone $query)->where('entry_type', CustomerCreditLedgerEntry::TYPE_APPLICATION)->sum('amount');
+        $credits = (clone $query)->whereIn('entry_type', CustomerCreditLedgerEntry::CREDIT_TYPES)->sum('amount');
+        $applications = (clone $query)->whereIn('entry_type', CustomerCreditLedgerEntry::DEBIT_TYPES)->sum('amount');
         return PaymentAllocationService::toMinorUnits((string) ($credits ?: '0')) - PaymentAllocationService::toMinorUnits((string) ($applications ?: '0'));
     }
 

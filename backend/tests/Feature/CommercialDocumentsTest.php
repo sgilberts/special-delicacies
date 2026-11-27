@@ -188,7 +188,9 @@ class CommercialDocumentsTest extends TestCase
 
     private function customer(string $phone): Customer
     {
-        return Customer::create(['name' => 'Commercial Customer', 'phone' => $phone, 'email' => $phone.'@example.test', 'password' => 'test-password', 'is_active' => true]);
+        $customer = Customer::create(['name' => 'Commercial Customer', 'phone' => $phone, 'email' => $phone.'@example.test', 'password' => 'test-password', 'is_active' => true]);
+        // Customer documents require both contact channels verified.
+        return tap($customer, fn (Customer $model) => $model->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save());
     }
 
     private function organisation(Customer $owner, string $name): Organisation
