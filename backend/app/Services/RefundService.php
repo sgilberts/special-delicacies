@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\ProviderRefundUnavailable;
 use App\Models\PaymentTransaction;
 use App\Models\RefundEvent;
 use App\Models\RefundRequest;
@@ -181,52 +182,52 @@ class RefundService
 
     public function submit(int $id, User $actor): RefundRequest
     {
-        $refund = RefundRequest::query()->with('payment')->findOrFail($id);
-        if ($refund->status === RefundRequest::STATUS_SUBMITTED) return $refund;
-        if ($refund->status !== RefundRequest::STATUS_APPROVED) throw new DomainException('Only approved refunds can be submitted.');
+        // The refund row is locked for the whole submission, including the
+        // provider call, so two concurrent submissions cannot both instruct the
+        // provider to refund the same payment. The transaction is not retried:
+        // a deadlock retry would re-invoke the provider.
+        try {
+            return DB::transaction(function () use ($id, $actor): RefundRequest {
+                $refund = RefundRequest::query()->lockForUpdate()->with('payment')->findOrFail($id);
+                if ($refund->status === RefundRequest::STATUS_SUBMITTED) return $refund;
+                if ($refund->status !== RefundRequest::STATUS_APPROVED) throw new DomainException('Only approved refunds can be submitted.');
 
-        $payment = $refund->payment;
-        $useProvider = $this->policy->providerRefundsEnabled() && $this->policy->providerSupportsRefunds($payment?->provider);
+                $payment = $refund->payment;
+                if ($this->policy->providerRefundsEnabled() && $this->policy->providerSupportsRefunds($payment?->provider)) {
+                    try {
+                        $result = $this->gateway->initiateRefund($payment, (string) $refund->amount, $refund->refund_reference);
+                    } catch (\Throwable $exception) {
+                        throw ProviderRefundUnavailable::from($exception);
+                    }
 
-        if ($useProvider) {
-            try {
-                $result = $this->gateway->initiateRefund($payment, (string) $refund->amount, $refund->refund_reference);
-            } catch (\Throwable $exception) {
-                // D12: never mark confirmed on a provider failure; keep approved for a safe retry.
-                $this->event($refund, 'provider_error', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_APPROVED, $actor, $exception->getMessage(), null, ['mode' => 'provider']);
-                throw new DomainException('The payment provider could not accept the refund right now. The refund remains approved and can be retried safely.');
-            }
+                    $refund->forceFill([
+                        'status' => RefundRequest::STATUS_SUBMITTED,
+                        'provider' => $payment->provider,
+                        'provider_refund_reference' => $result['provider_refund_reference'],
+                        'submitted_at' => now(),
+                        'metadata' => array_merge((array) $refund->metadata, ['mode' => 'provider', 'provider_status' => $result['provider_status']]),
+                    ])->save();
+                    $this->event($refund, 'submitted', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_SUBMITTED, $actor, null, $result['provider_refund_reference'], ['mode' => 'provider']);
+                    $this->audit->log($actor, 'stage4c.refund.submitted', 'Submitted refund '.$refund->refund_reference.' to the provider.', $refund, null, ['provider' => $payment->provider]);
+                    return $refund->fresh(['payment']);
+                }
 
-            return DB::transaction(function () use ($id, $actor, $result): RefundRequest {
-                $locked = RefundRequest::query()->lockForUpdate()->findOrFail($id);
-                if ($locked->status !== RefundRequest::STATUS_APPROVED) return $locked;
-                $locked->forceFill([
+                $refund->forceFill([
                     'status' => RefundRequest::STATUS_SUBMITTED,
-                    'provider' => 'paystack',
-                    'provider_refund_reference' => $result['provider_refund_reference'],
+                    'provider' => $payment?->provider ?: 'manual',
                     'submitted_at' => now(),
-                    'metadata' => array_merge((array) $locked->metadata, ['mode' => 'provider', 'provider_status' => $result['provider_status']]),
+                    'metadata' => array_merge((array) $refund->metadata, ['mode' => 'manual']),
                 ])->save();
-                $this->event($locked, 'submitted', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_SUBMITTED, $actor, null, $result['provider_refund_reference'], ['mode' => 'provider']);
-                $this->audit->log($actor, 'stage4c.refund.submitted', 'Submitted refund '.$locked->refund_reference.' to the provider.', $locked, null, ['provider' => 'paystack']);
-                return $locked->fresh(['payment']);
-            }, 3);
+                $this->event($refund, 'submitted', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_SUBMITTED, $actor, 'Manual refund instruction recorded.', null, ['mode' => 'manual']);
+                $this->audit->log($actor, 'stage4c.refund.submitted', 'Recorded a manual refund instruction for '.$refund->refund_reference.'.', $refund, null, ['mode' => 'manual']);
+                return $refund->fresh(['payment']);
+            }, 1);
+        } catch (ProviderRefundUnavailable $exception) {
+            // D12: the transaction rolled back, so the refund is still approved.
+            // Record the provider failure as an audit event and allow a retry.
+            $this->recordProviderError($id, $actor, $exception->getPrevious()?->getMessage() ?? $exception->getMessage());
+            throw new DomainException('The payment provider could not accept the refund right now. The refund remains approved and can be retried safely.');
         }
-
-        return DB::transaction(function () use ($id, $actor): RefundRequest {
-            $locked = RefundRequest::query()->lockForUpdate()->findOrFail($id);
-            if ($locked->status === RefundRequest::STATUS_SUBMITTED) return $locked;
-            if ($locked->status !== RefundRequest::STATUS_APPROVED) throw new DomainException('Only approved refunds can be submitted.');
-            $locked->forceFill([
-                'status' => RefundRequest::STATUS_SUBMITTED,
-                'provider' => $locked->payment?->provider ?: 'manual',
-                'submitted_at' => now(),
-                'metadata' => array_merge((array) $locked->metadata, ['mode' => 'manual']),
-            ])->save();
-            $this->event($locked, 'submitted', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_SUBMITTED, $actor, 'Manual refund instruction recorded.', null, ['mode' => 'manual']);
-            $this->audit->log($actor, 'stage4c.refund.submitted', 'Recorded a manual refund instruction for '.$locked->refund_reference.'.', $locked, null, ['mode' => 'manual']);
-            return $locked->fresh(['payment']);
-        }, 3);
     }
 
     public function confirm(int $id, User $actor, ?string $providerReference, ?string $evidence): RefundRequest
@@ -373,6 +374,13 @@ class RefundService
         return $payment->organisation_id !== null
             ? ['type' => 'organisation', 'id' => $payment->organisation?->id, 'name' => $payment->organisation?->name]
             : ['type' => 'customer', 'id' => $payment->customer?->id, 'name' => $payment->customer?->name];
+    }
+
+    private function recordProviderError(int $id, User $actor, string $message): void
+    {
+        $refund = RefundRequest::query()->find($id);
+        if (! $refund) return;
+        $this->event($refund, 'provider_error', RefundRequest::STATUS_APPROVED, RefundRequest::STATUS_APPROVED, $actor, $message, null, ['mode' => 'provider']);
     }
 
     private function event(RefundRequest $refund, string $action, ?string $from, ?string $to, User $actor, ?string $reason = null, ?string $providerReference = null, ?array $metadata = null): void

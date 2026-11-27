@@ -45,7 +45,7 @@ class GatewayPaymentService
         $gateway = $this->refundGatewayFor($payment->provider);
         if (! $gateway) throw new RuntimeException('Refund credentials are not configured for this payment provider.');
 
-        $minor = (int) round(((float) $amount) * 100);
+        $minor = PaymentAllocationService::toMinorUnits($amount);
         $response = Http::withToken($gateway->secret_key)->acceptJson()->timeout(20)
             ->post('https://api.paystack.co/refund', [
                 'transaction' => $payment->provider_reference ?: $payment->transaction_reference,

@@ -27,7 +27,7 @@ class CustomerCreditService
                 $payer->where(fn (Builder $q) => $q->whereNotNull('customer_id')->whereNull('organisation_id'))
                     ->orWhere(fn (Builder $q) => $q->whereNull('customer_id')->whereNotNull('organisation_id'));
             })
-            ->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type = 'designation'), 0)")
+            ->whereRaw("payment_transactions.amount > COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa JOIN payment_allocation_operations po ON po.id = pa.payment_allocation_operation_id LEFT JOIN payment_allocation_reversals pr ON pr.payment_allocation_id = pa.id WHERE po.payment_transaction_id = payment_transactions.id AND pr.id IS NULL), 0) + COALESCE((SELECT SUM(ce.amount) FROM customer_credit_ledger_entries ce WHERE ce.source_payment_transaction_id = payment_transactions.id AND ce.entry_type = 'designation'), 0) - COALESCE((SELECT SUM(rev.amount) FROM customer_credit_ledger_entries rev JOIN customer_credit_ledger_entries orig ON orig.id = rev.reverses_entry_id WHERE orig.source_payment_transaction_id = payment_transactions.id AND orig.entry_type = 'designation' AND rev.entry_type = 'reversal'), 0)")
             ->orderByDesc('received_at')->orderByDesc('id');
 
         if (filled($filters['search'] ?? null)) {

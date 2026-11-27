@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\CustomerCreditReversalService;
 use App\Services\CustomerCreditService;
 use App\Services\PaymentAllocationService;
+use App\Services\RefundService;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
@@ -186,6 +187,24 @@ class Stage4cCreditReversalTest extends TestCase
         Sanctum::actingAs($this->customer);
         $this->getJson('/api/v1/admin/financials/credit-reversals')->assertForbidden();
         $this->postJson('/api/v1/admin/financials/credit-reversals/'.$created['id'].'/approve')->assertForbidden();
+    }
+
+    public function test_reversing_designated_credit_releases_the_receipt_funds(): void
+    {
+        [$payment, $entry] = $this->creditedReceipt('100.00');
+        $allocations = app(PaymentAllocationService::class);
+        $refunds = app(RefundService::class);
+
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits($refunds->refundableMinor($payment->fresh())));
+
+        $service = app(CustomerCreditReversalService::class);
+        $request = $service->initiate($entry->id, '100.00', 'rev-ref-0101', 'Customer returned the unspent advance', $this->initiator);
+        $service->approve($request->id, $this->approver);
+
+        $this->assertSame('0.00', PaymentAllocationService::formatMinorUnits(app(CustomerCreditService::class)->balanceMinor($this->customer, 'GHS')));
+        $this->assertSame('100.00', PaymentAllocationService::formatMinorUnits($allocations->availableMinorForPayment($payment->id)));
+        $this->assertSame('100.00', PaymentAllocationService::formatMinorUnits($refunds->refundableMinor($payment->fresh())));
     }
 
     private function creditedReceipt(string $amount): array
