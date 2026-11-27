@@ -13,6 +13,32 @@ function getToken(): string {
 }
 
 const broadcaster = (import.meta.env.VITE_BROADCAST_DRIVER as string) || 'reverb';
+
+// VITE_BROADCAST_DRIVER=none disables realtime for deployments without a
+// broadcast server. Pages then use their polling fallbacks instead of opening a
+// socket that can never connect.
+function createDisabledEcho() {
+  const channel = {
+    listen: () => channel,
+    listenToAll: () => channel,
+    notification: () => channel,
+    subscribed: () => channel,
+    error: () => channel,
+    stopListening: () => channel,
+    stopListeningToAll: () => channel,
+  };
+  return {
+    connector: { pusher: { connection: { state: 'disconnected', bind() {}, unbind() {} } } },
+    private: () => channel,
+    channel: () => channel,
+    join: () => channel,
+    leave: () => undefined,
+    leaveChannel: () => undefined,
+    disconnect: () => undefined,
+    socketId: () => null,
+  };
+}
+
 const authEndpoint = `${(import.meta.env.VITE_API_BASE_URL as string).replace(/\/$/, '').replace(/\/api\/v1$/, '')}/api/v1/broadcasting/auth`;
 const channelAuthorization = {
   endpoint: authEndpoint,
@@ -22,7 +48,9 @@ const channelAuthorization = {
     Authorization: `Bearer ${getToken()}`,
   }),
 };
-const echo = broadcaster === 'pusher'
+const echo = broadcaster === 'none' || broadcaster === 'null'
+  ? (createDisabledEcho() as unknown as Echo<'reverb'>)
+  : broadcaster === 'pusher'
   ? new Echo({
       broadcaster: 'pusher' as const,
       key: (import.meta.env.VITE_PUSHER_APP_KEY as string) || (import.meta.env.VITE_REVERB_APP_KEY as string),

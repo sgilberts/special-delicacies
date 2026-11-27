@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Generated preview wrapper (mounted by the preview environment, never committed)
+/vite.preview.config.ts
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

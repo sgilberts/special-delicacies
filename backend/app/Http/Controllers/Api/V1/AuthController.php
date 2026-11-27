@@ -7,6 +7,7 @@ use App\Http\Requests\Auth\LoginRequest;
 use App\Models\User;
 use App\Models\ChatAgentPresence;
 use App\Services\ApiTokenSession;
+use App\Services\GhanaPhoneNumber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -128,7 +129,7 @@ class AuthController extends Controller
         if (isset($validated['email']) && mb_strtolower(trim($validated['email'])) !== mb_strtolower((string) $user->email)) {
             $user->email_verified_at = null;
         }
-        if (isset($validated['phone']) && trim((string) $validated['phone']) !== trim((string) $user->phone)) {
+        if (isset($validated['phone']) && ! GhanaPhoneNumber::sameNumber((string) $validated['phone'], $user->phone)) {
             $user->phone_verified_at = null;
         }
         foreach (['name', 'email', 'phone'] as $field) {

@@ -48,6 +48,7 @@ const AdminChatSettingsPage = lazy(() => import("@/pages/admin/AdminChatSettings
 const CustomerLoginPage = lazy(() => import("@/pages/customer/CustomerLoginPage"));
 const CustomerRegisterPage = lazy(() => import("@/pages/customer/CustomerRegisterPage"));
 const CustomerAccountPage = lazy(() => import("@/pages/customer/CustomerAccountPage"));
+const CustomerDepositsPage = lazy(() => import("@/pages/customer/CustomerDepositsPage"));
 const CustomerProtectedRoute = lazy(() => import("@/pages/customer/CustomerProtectedRoute"));
 const OrganisationsPage = lazy(() => import("@/pages/customer/OrganisationsPage"));
 const OrganisationDetailPage = lazy(() => import("@/pages/customer/OrganisationDetailPage"));
@@ -77,6 +78,7 @@ function App() {
         <Route path="account" element={<CustomerProtectedRoute><CustomerAccountPage /></CustomerProtectedRoute>} />
         <Route path="account/organisations" element={<CustomerProtectedRoute><OrganisationsPage /></CustomerProtectedRoute>} />
         <Route path="account/organisations/:organisationId" element={<CustomerProtectedRoute><OrganisationDetailPage /></CustomerProtectedRoute>} />
+        <Route path="account/deposits" element={<CustomerProtectedRoute><CustomerDepositsPage /></CustomerProtectedRoute>} />
         <Route path="account/documents" element={<CustomerProtectedRoute><CustomerDocumentsPage /></CustomerProtectedRoute>} />
         <Route path="account/documents/:documentType/:documentId" element={<CustomerProtectedRoute><CustomerDocumentDetailPage /></CustomerProtectedRoute>} />
       </Route>

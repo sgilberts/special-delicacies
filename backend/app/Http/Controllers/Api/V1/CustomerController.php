@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use App\Services\ApiTokenSession;
+use App\Services\GhanaPhoneNumber;
 use Symfony\Component\HttpFoundation\Response;
 
 class CustomerController extends Controller
@@ -55,7 +56,8 @@ class CustomerController extends Controller
     public function login(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'phone' => ['required', 'string', 'max:30'],
+            'email' => ['nullable', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:30'],
             'password' => ['required', 'string'],
             'remember' => ['sometimes', 'boolean'],
         ]);
@@ -64,9 +66,19 @@ class CustomerController extends Controller
             return response()->json(['success' => false, 'message' => 'The given data was invalid.', 'errors' => $validator->errors()], 422);
         }
 
-        $customer = Customer::where('phone', trim($validator->validated()['phone']))->first();
+        $email = mb_strtolower(trim((string) ($validator->validated()['email'] ?? '')));
+        $phone = trim((string) ($validator->validated()['phone'] ?? ''));
+        if ($email === '' && $phone === '') {
+            return response()->json(['success' => false, 'message' => 'Enter your email address or telephone number.', 'errors' => ['email' => ['Enter your email address or telephone number.']]], 422);
+        }
+
+        // The email address and the telephone number resolve to the same
+        // customer account; either identifier authenticates that account.
+        $customer = $email !== ''
+            ? Customer::where('email', $email)->first()
+            : Customer::where('phone', $phone)->first();
         if (! $customer || ! Hash::check($validator->validated()['password'], $customer->password)) {
-            return response()->json(['success' => false, 'message' => 'Invalid phone number or password.'], 422);
+            return response()->json(['success' => false, 'message' => 'Invalid credentials. Check your email or telephone number and password.'], 422);
         }
         if (! $customer->is_active) {
             return response()->json(['success' => false, 'message' => 'This customer account is deactivated.'], 403);
@@ -106,7 +118,7 @@ class CustomerController extends Controller
         if (array_key_exists('email', $values) && mb_strtolower(trim((string) $values['email'])) !== mb_strtolower((string) $customer->email)) {
             $customer->email_verified_at = null;
         }
-        if (array_key_exists('phone', $values) && trim((string) $values['phone']) !== trim((string) $customer->phone)) {
+        if (array_key_exists('phone', $values) && ! GhanaPhoneNumber::sameNumber((string) $values['phone'], (string) $customer->phone)) {
             $customer->phone_verified_at = null;
         }
         foreach (['name', 'phone', 'email'] as $field) {

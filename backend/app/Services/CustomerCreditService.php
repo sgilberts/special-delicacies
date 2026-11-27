@@ -79,6 +79,11 @@ class CustomerCreditService
                     && trim($existing->reason) === trim($reason) && (int) $existing->actor_user_id === (int) $actor->id) return $existing;
                 throw new DomainException('This receipt already has a deposit or advance designation.');
             }
+            // operation_reference is unique across all receipt intents; reject a
+            // reference reused by another receipt instead of surfacing a database error.
+            if (PaymentReceiptIntent::query()->where('operation_reference', $operationReference)->exists()) {
+                throw new DomainException('This operation reference was already used for another receipt designation.');
+            }
             return PaymentReceiptIntent::query()->create([
                 'payment_transaction_id' => $payment->id, 'intent' => $intent,
                 'operation_reference' => $operationReference, 'reason' => trim($reason),

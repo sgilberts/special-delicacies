@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\PasswordRecoveryController;
 use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\CustomerCreditController;
+use App\Http\Controllers\Api\V1\CustomerDepositController;
 use App\Http\Controllers\Api\V1\CustomerCommercialDocumentController;
 use App\Http\Controllers\Api\V1\OrganisationController;
 use App\Http\Controllers\Api\V1\OrganisationInvitationController;
@@ -33,12 +34,14 @@ use App\Http\Controllers\Api\V1\Admin\AdminPaymentGatewayController;
 use App\Http\Controllers\Api\V1\Admin\FinancialController;
 use App\Http\Controllers\Api\V1\Admin\PaymentAllocationController;
 use App\Http\Controllers\Api\V1\Admin\CustomerCreditController as AdminCustomerCreditController;
+use App\Http\Controllers\Api\V1\Admin\DepositController as AdminDepositController;
 use App\Http\Controllers\Api\V1\Admin\CommercialDocumentController;
 use App\Http\Controllers\Api\V1\Admin\ChatAdminController;
 use App\Http\Controllers\Api\V1\PublicContentController;
 use App\Http\Controllers\Api\V1\PublicDeliveryZoneController;
 use App\Http\Controllers\Api\V1\TableQrController;
 use App\Http\Middleware\EnsureCustomerAccount;
+use App\Http\Middleware\EnsureCustomerFullyVerified;
 use App\Http\Middleware\EnsureStaffAccount;
 use App\Http\Middleware\EnsureOrganisationPermission;
 use Illuminate\Http\Request;
@@ -91,15 +94,24 @@ Route::prefix('v1')->group(function () {
         Route::post('/logout', [CustomerController::class, 'logout']);
         Route::post('/verification/{channel}/request', [AccountVerificationController::class, 'requestCustomer'])->middleware('throttle:5,1');
         Route::post('/verification/{channel}/verify', [AccountVerificationController::class, 'verifyCustomer'])->middleware('throttle:10,1');
-        Route::get('/quotations', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'quotation');
-        Route::get('/quotations/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'quotation');
-        Route::get('/quotations/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'quotation');
-        Route::post('/quotations/{commercialDocument}/accept', [CustomerCommercialDocumentController::class, 'accept'])->defaults('type', 'quotation');
-        Route::post('/quotations/{commercialDocument}/decline', [CustomerCommercialDocumentController::class, 'decline'])->defaults('type', 'quotation');
-        Route::get('/invoices', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'invoice');
-        Route::get('/invoices/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'invoice');
-        Route::get('/invoices/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'invoice');
-        Route::get('/credit', [CustomerCreditController::class, 'index']);
+        // Full customer features require a verified email address AND telephone
+        // number; the gate is enforced here so it cannot be bypassed from the UI.
+        Route::middleware(EnsureCustomerFullyVerified::class)->group(function () {
+            Route::get('/quotations', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'quotation');
+            Route::get('/quotations/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'quotation');
+            Route::get('/quotations/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'quotation');
+            Route::post('/quotations/{commercialDocument}/accept', [CustomerCommercialDocumentController::class, 'accept'])->defaults('type', 'quotation');
+            Route::post('/quotations/{commercialDocument}/decline', [CustomerCommercialDocumentController::class, 'decline'])->defaults('type', 'quotation');
+            Route::get('/invoices', [CustomerCommercialDocumentController::class, 'index'])->defaults('type', 'invoice');
+            Route::get('/invoices/{commercialDocument}', [CustomerCommercialDocumentController::class, 'show'])->defaults('type', 'invoice');
+            Route::get('/invoices/{commercialDocument}/history', [CustomerCommercialDocumentController::class, 'history'])->defaults('type', 'invoice');
+            Route::get('/credit', [CustomerCreditController::class, 'index']);
+            Route::get('/deposits', [CustomerDepositController::class, 'index']);
+            Route::get('/deposits/options', [CustomerDepositController::class, 'options']);
+            Route::post('/deposits', [CustomerDepositController::class, 'store'])->middleware('throttle:10,1');
+            Route::get('/deposits/{reference}', [CustomerDepositController::class, 'show'])->middleware('throttle:60,1');
+            Route::post('/deposits/{reference}/verify', [CustomerDepositController::class, 'verify'])->middleware('throttle:20,1');
+        });
         Route::get('/invitations', [OrganisationInvitationController::class, 'inbox']);
         Route::post('/invitations/{invitation}/accept', [OrganisationInvitationController::class, 'accept']);
 
@@ -354,6 +366,15 @@ Route::prefix('v1')->group(function () {
             Route::get('/ledger', [AdminCustomerCreditController::class, 'ledger'])->middleware('permission:financials.customer_credit.view,financials.customer_credit.manage');
             Route::post('/designations', [AdminCustomerCreditController::class, 'designate'])->middleware(['permission:financials.customer_credit.manage', 'throttle:20,1']);
             Route::post('/applications', [AdminCustomerCreditController::class, 'apply'])->middleware(['permission:financials.customer_credit.manage', 'throttle:20,1']);
+        });
+
+        Route::prefix('admin/deposits')->group(function () {
+            Route::get('/', [AdminDepositController::class, 'index'])->middleware('permission:financials.deposits.view,financials.deposits.manage');
+            Route::get('/payers', [AdminDepositController::class, 'payers'])->middleware('permission:financials.deposits.manage');
+            Route::post('/', [AdminDepositController::class, 'store'])->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
+            Route::get('/{deposit}', [AdminDepositController::class, 'show'])->whereNumber('deposit')->middleware('permission:financials.deposits.view,financials.deposits.manage');
+            Route::post('/{deposit}/verify', [AdminDepositController::class, 'verify'])->whereNumber('deposit')->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
+            Route::post('/{deposit}/reject', [AdminDepositController::class, 'reject'])->whereNumber('deposit')->middleware(['permission:financials.deposits.manage', 'throttle:20,1']);
         });
 
         // Phase 9: Staff & User Management

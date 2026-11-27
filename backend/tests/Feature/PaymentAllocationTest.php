@@ -42,6 +42,8 @@ class PaymentAllocationTest extends TestCase
             'name' => 'Invoice Payer', 'phone' => '0200000777', 'email' => 'payer@example.test',
             'password' => 'test-password', 'is_active' => true,
         ]);
+        // Customer invoice access requires both contact channels verified.
+        $this->customer->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save();
     }
 
     public function test_partial_and_split_allocations_update_derived_balances_and_are_idempotent(): void
