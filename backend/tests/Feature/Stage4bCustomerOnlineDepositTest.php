@@ -36,6 +36,8 @@ class Stage4bCustomerOnlineDepositTest extends TestCase
             'name' => 'Online Deposit Customer', 'phone' => '0200000901', 'email' => 'online-deposit@example.test',
             'password' => 'customer-password', 'is_active' => true,
         ]);
+        // Online deposits require both contact channels verified.
+        $this->customer->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save();
         $this->gateway = PaymentGateway::create([
             'provider' => 'paystack', 'display_name' => 'Paystack Test', 'public_key' => 'pk_test',
             'secret_key' => 'sk_test_online_deposit', 'is_enabled' => true, 'is_default' => true,
@@ -82,6 +84,7 @@ class Stage4bCustomerOnlineDepositTest extends TestCase
             'name' => 'Unrelated Deposit Customer', 'phone' => '0200000902', 'email' => 'unrelated-deposit@example.test',
             'password' => 'customer-password', 'is_active' => true,
         ]);
+        $other->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save();
         $this->withToken($this->tokenFor($other))->getJson('/api/v1/customer/deposits/'.$reference)->assertNotFound();
         $this->withToken($this->tokenFor($other))->postJson('/api/v1/customer/deposits/'.$reference.'/verify')->assertNotFound();
     }
@@ -112,6 +115,7 @@ class Stage4bCustomerOnlineDepositTest extends TestCase
             'name' => 'Organisation Outsider', 'phone' => '0200000903', 'email' => 'outsider@example.test',
             'password' => 'customer-password', 'is_active' => true,
         ]);
+        $outsider->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save();
         $this->withToken($this->tokenFor($outsider))
             ->postJson('/api/v1/customer/deposits', [
                 'payer_type' => 'organisation', 'organisation_id' => $organisation->id, 'intent' => 'deposit',

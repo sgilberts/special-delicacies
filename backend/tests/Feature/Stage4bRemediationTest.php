@@ -180,6 +180,9 @@ class Stage4bRemediationTest extends TestCase
             'name' => 'Unrelated Customer', 'phone' => '0200000806', 'email' => 'unrelated@example.test',
             'password' => 'unrelated-password', 'is_active' => true,
         ]);
+        // Customer credit requires both contact channels verified.
+        $this->customer->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save();
+        $other->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save();
         Sanctum::actingAs($other);
         $this->getJson('/api/v1/customer/credit')->assertOk()
             ->assertJsonCount(1, 'data.accounts')

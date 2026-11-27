@@ -104,6 +104,8 @@ class Stage4bCreditAndSecurityTest extends TestCase
         $credit = app(CustomerCreditService::class);
         $credit->classifyReceipt($orgPayment->id, 'deposit', 'stage4b-intent-org-1', 'Organisation deposit', $this->actor);
         $credit->designateCredit($orgPayment->id, '20.00', 'stage4b-credit-org-1', 'Organisation credit', $this->actor);
+        // Customer credit requires both contact channels verified.
+        $this->customer->forceFill(['email_verified_at' => now(), 'phone_verified_at' => now()])->save();
         $this->customer->createToken('customer-session');
         Sanctum::actingAs($this->customer);
 

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import customerApi from "@/lib/customerApi";
+import { verificationGate } from "@/lib/verificationGate";
 
 type Payer = { type: "customer" | "organisation"; id: number; name: string };
 type GatewayOption = { id: number; provider: string; name: string };
@@ -50,6 +52,7 @@ export default function CustomerDepositPanel() {
   const [checking, setChecking] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [restricted, setRestricted] = useState(false);
 
   const load = useCallback(async (): Promise<Deposit[]> => {
     const [optionsResponse, historyResponse] = await Promise.all([
@@ -79,7 +82,7 @@ export default function CustomerDepositPanel() {
         // Drop the gateway return parameter so a refresh does not replay it.
         window.history.replaceState({}, "", window.location.pathname);
       })
-      .catch(() => setError("Deposit information is temporarily unavailable."))
+      .catch(cause => { if (verificationGate(cause)) setRestricted(true); else setError("Deposit information is temporarily unavailable."); })
       .finally(() => setLoading(false));
   }, [load]);
 
@@ -134,7 +137,12 @@ export default function CustomerDepositPanel() {
   const noGateways = options !== null && options.gateways.length === 0;
 
   return <section className="space-y-6">
-    <div className="rounded-2xl border bg-[var(--color-surface)] p-5" style={borderStyle}>
+    {restricted && <div className="rounded-2xl border bg-[var(--color-surface)] p-5" style={borderStyle}>
+      <h2 className="text-xl font-bold">Verification required</h2>
+      <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Verify both your email address and telephone number to unlock deposits, advances and deposit history.</p>
+      <Link to="/account" className="mt-3 inline-flex min-h-11 items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm font-bold text-white no-underline">Go to verification</Link>
+    </div>}
+    {!restricted && <div className="rounded-2xl border bg-[var(--color-surface)] p-5" style={borderStyle}>
       <h2 className="text-xl font-bold">Make a deposit</h2>
       <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
         Pay a deposit or advance towards a future order or invoice. Your receipt is only confirmed after the payment provider verifies it.
@@ -174,9 +182,9 @@ export default function CustomerDepositPanel() {
       {noGateways && <p role="status" className="mt-4 rounded-lg bg-[var(--color-background)] p-3 text-sm text-[var(--color-text-secondary)]">
         Online deposits are not available right now. Please contact the restaurant to arrange a deposit.
       </p>}
-    </div>
+    </div>}
 
-    <div className="rounded-2xl border bg-[var(--color-surface)] p-5" style={borderStyle}>
+    {!restricted && <div className="rounded-2xl border bg-[var(--color-surface)] p-5" style={borderStyle}>
       <h2 className="text-xl font-bold">Deposit history</h2>
       {loading && <p role="status" className="mt-3 text-sm text-[var(--color-text-secondary)]">Loading your deposits…</p>}
       {!loading && deposits.length === 0 && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">You have no deposits yet.</p>}
@@ -206,6 +214,6 @@ export default function CustomerDepositPanel() {
           </p>}
         </li>)}
       </ul>
-    </div>
+    </div>}
   </section>;
 }
