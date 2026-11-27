@@ -23,6 +23,7 @@ import {
   History,
   WalletCards,
   MessageCircle,
+  Contact,
   FileText,
   RotateCcw,
   FileMinus,
@@ -147,8 +148,21 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
     sections.push({ heading: "Commercial", items: [{ label: "Quotations & Invoices", to: "/admin/commercial-documents", icon: FileText }] });
   }
 
+  // Customer Support groups the customer record and the support inbox. Each
+  // item appears only for the capability it needs, so a customer administrator
+  // without chat access still gets the section.
+  const customerSupportItems: NavItem[] = [];
   if (isSuperAdmin || userPermissions.some((permission) => ["chat.view_assigned", "chat.view_all"].includes(permission))) {
-    sections.push({ heading: "Customer Support", items: [{ label: "Live Chat Inbox", to: "/admin/chat", icon: MessageCircle }, ...(isSuperAdmin || userPermissions.includes("chat.manage_settings") ? [{ label: "Chat Availability", to: "/admin/chat/settings", icon: MessageCircle }] : [])] });
+    customerSupportItems.push({ label: "Live Chat Inbox", to: "/admin/chat", icon: MessageCircle });
+    if (isSuperAdmin || userPermissions.includes("chat.manage_settings")) {
+      customerSupportItems.push({ label: "Chat Availability", to: "/admin/chat/settings", icon: MessageCircle });
+    }
+  }
+  if (hasAnyPermission(userPermissions, ["customers.view"], user?.roles)) {
+    customerSupportItems.push({ label: "Customers", to: "/admin/customers", icon: Contact });
+  }
+  if (customerSupportItems.length > 0) {
+    sections.push({ heading: "Customer Support", items: customerSupportItems });
   }
 
   if (operationsItems.length > 0) {

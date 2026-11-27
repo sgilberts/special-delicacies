@@ -270,6 +270,15 @@ class RoleAndPermissionSeeder extends Seeder
             ['name' => 'Delete Chat Messages', 'slug' => 'chat.delete_message', 'description' => 'Tombstone messages while preserving audit evidence'],
             ['name' => 'Manage Chat Settings', 'slug' => 'chat.manage_settings', 'description' => 'Manage chat availability and assignment settings'],
             ['name' => 'View Chat Audit Logs', 'slug' => 'chat.view_audit_logs', 'description' => 'Review conversation audit history'],
+
+            // Customer support / customer management. Granted explicitly per
+            // role in Roles & Permissions; never handed to every administrator.
+            ['name' => 'View Customers', 'slug' => 'customers.view', 'description' => 'View customer records and customer profiles'],
+            ['name' => 'Create Customers', 'slug' => 'customers.create', 'description' => 'Create customer records from the admin portal'],
+            ['name' => 'Update Customers', 'slug' => 'customers.update', 'description' => 'Edit customer profile and contact details'],
+            ['name' => 'Archive Customers', 'slug' => 'customers.archive', 'description' => 'Archive a customer while preserving financial and audit history'],
+            ['name' => 'Restore Customers', 'slug' => 'customers.restore', 'description' => 'Restore an archived customer to active status'],
+            ['name' => 'View Customer Financials', 'slug' => 'customers.view_financials', 'description' => 'View a customer\'s payments, deposits, invoices, refunds and credit balance'],
         ];
 
         $permissionModels = [];
@@ -292,7 +301,17 @@ class RoleAndPermissionSeeder extends Seeder
                 'name' => 'Admin',
                 'slug' => 'admin',
                 'description' => 'Restaurant administrator; access is controlled by assigned permissions.',
-                'permissions' => array_values(array_filter(array_keys($permissionModels), fn ($slug) => ! str_starts_with($slug, 'financials.') && ! str_starts_with($slug, 'chat.') && $slug !== 'reverb.monitor')),
+                // Customer management is granted explicitly per role in Roles &
+                // Permissions, never to every administrator by default. The
+                // migration that creates these permissions grants them to
+                // super-admin only, so a re-seed never silently removes a grant.
+                'permissions' => array_values(array_filter(
+                    array_keys($permissionModels),
+                    fn ($slug) => ! str_starts_with($slug, 'financials.')
+                        && ! str_starts_with($slug, 'chat.')
+                        && ! str_starts_with($slug, 'customers.')
+                        && $slug !== 'reverb.monitor'
+                )),
             ],
             'waiter-waitress' => [
                 'name' => 'Waiter/Waitress',

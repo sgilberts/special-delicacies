@@ -43,6 +43,7 @@ const AdminAuditLogsPage = lazy(() => import("@/pages/admin/AdminAuditLogsPage")
 const AdminProfilePage = lazy(() => import("@/pages/admin/AdminProfilePage"));
 const AdminFinancialsPage = lazy(() => import("@/pages/admin/AdminFinancialsPage"));
 const AdminPaymentAllocationsPage = lazy(() => import("@/pages/admin/AdminPaymentAllocationsPage"));
+const AdminCustomersPage = lazy(() => import("@/pages/admin/AdminCustomersPage"));
 const AdminChatPage = lazy(() => import("@/pages/admin/AdminChatPage"));
 const AdminChatSettingsPage = lazy(() => import("@/pages/admin/AdminChatSettingsPage"));
 const CustomerLoginPage = lazy(() => import("@/pages/customer/CustomerLoginPage"));
@@ -153,6 +154,7 @@ function App() {
         <Route path="refunds" element={<ProtectedRoute requiredPermissions={["financials.refunds.view", "financials.refunds.initiate", "financials.refunds.approve"]}><AdminRefundsPage /></ProtectedRoute>} />
         <Route path="credit-notes" element={<ProtectedRoute requiredPermissions={["financials.credit_notes.view", "financials.credit_notes.create", "financials.credit_notes.approve"]}><AdminCreditNotesPage /></ProtectedRoute>} />
         <Route path="credit-reversals" element={<ProtectedRoute requiredPermissions={["financials.credit_reversals.view", "financials.credit_reversals.initiate", "financials.credit_reversals.approve"]}><AdminCreditReversalsPage /></ProtectedRoute>} />
+        <Route path="customers" element={<ProtectedRoute requiredPermissions={["customers.view"]}><AdminCustomersPage /></ProtectedRoute>} />
         <Route path="chat" element={<AdminChatPage />} />
         <Route path="chat/settings" element={<AdminChatSettingsPage />} />
       </Route>

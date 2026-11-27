@@ -66,6 +66,23 @@ class DepositService
             ->all();
     }
 
+    /**
+     * Totals for the staff-facing customer profile. Uses the same deposit query
+     * as the customer's own deposit history, restricted to settled receipts.
+     *
+     * @return array{total: string, count: int}
+     */
+    public function customerDepositTotals(Customer $customer): array
+    {
+        $query = $this->customerDepositQuery($customer)->where('status', 'succeeded');
+        $total = (string) (clone $query)->selectRaw('COALESCE(SUM(amount), 0) as total')->value('total');
+
+        return [
+            'total' => PaymentAllocationService::formatMinorUnits(PaymentAllocationService::toMinorUnits($total)),
+            'count' => (clone $query)->count(),
+        ];
+    }
+
     public function customerDeposit(Customer $customer, string $reference, bool $verify = true): array
     {
         $transaction = $this->customerDepositQuery($customer)->where('transaction_reference', $reference)->first();

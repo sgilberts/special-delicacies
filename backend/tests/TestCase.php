@@ -20,6 +20,9 @@ abstract class TestCase extends BaseTestCase
         'special_delicacies_stage4a_test',
         'special_delicacies_stage4a_acceptance_test',
         'special_delicacies_stage4b_test',
+        // The disposable preview database backs the running browser preview;
+        // a MySQL test run must never migrate:fresh it.
+        'special_delicacies_preview_test',
     ];
 
     /**

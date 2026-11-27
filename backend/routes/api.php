@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Admin\AdminAuditLogController;
+use App\Http\Controllers\Api\V1\Admin\AdminCustomerController;
 use App\Http\Controllers\Api\V1\Admin\AdminDashboardController;
 use App\Http\Controllers\Api\V1\Admin\AdminOrderController;
 use App\Http\Controllers\Api\V1\Admin\AdminRolePermissionController;
@@ -466,6 +467,26 @@ Route::prefix('v1')->group(function () {
         });
         Route::get('/admin/permissions', [AdminRolePermissionController::class, 'permissions'])
             ->middleware('permission:roles.manage');
+
+        // Customer Support: administrative customer management.
+        // Each capability has its own granular permission; financial figures are
+        // additionally gated behind customers.view_financials.
+        Route::prefix('admin/customers')->group(function () {
+            Route::get('/', [AdminCustomerController::class, 'index'])
+                ->middleware('permission:customers.view');
+            Route::post('/', [AdminCustomerController::class, 'store'])
+                ->middleware(['permission:customers.create', 'throttle:30,1']);
+            Route::get('/{id}', [AdminCustomerController::class, 'show'])
+                ->whereNumber('id')->middleware('permission:customers.view');
+            Route::put('/{id}', [AdminCustomerController::class, 'update'])
+                ->whereNumber('id')->middleware(['permission:customers.update', 'throttle:30,1']);
+            Route::get('/{id}/financials', [AdminCustomerController::class, 'financials'])
+                ->whereNumber('id')->middleware('permission:customers.view_financials');
+            Route::post('/{id}/archive', [AdminCustomerController::class, 'archive'])
+                ->whereNumber('id')->middleware(['permission:customers.archive', 'throttle:20,1']);
+            Route::post('/{id}/restore', [AdminCustomerController::class, 'restore'])
+                ->whereNumber('id')->middleware(['permission:customers.restore', 'throttle:20,1']);
+        });
 
         // Phase 9: Administrative Order Oversight
         Route::prefix('admin/orders')->group(function () {
