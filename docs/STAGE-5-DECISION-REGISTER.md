@@ -72,16 +72,23 @@ If B: the hold duration per category, and whether staff may extend it.
 
 ---
 
-## D-5 — Table registry and dine-in interaction
+## D-5A — Shared table architecture
 
-**Status:** OPEN — blocks Stage 5.2.
+**Status:** APPROVED — 28 November 2026 (project-owner instruction authorising Stages 5.1 and 5.2).
 
-**What was verified:** `restaurant_tables` (`table_number` globally unique, `capacity`, `is_active`) exists for dine-in QR ordering and has no venue, type, availability window, or reservation flag. `orders.restaurant_table_id` records dine-in occupancy but there is no occupancy window, so dine-in orders do not make a table unavailable for a future time.
+**Decision:** The existing `restaurant_tables` model is extended directly and remains the central physical-table record for both dine-in QR ordering and reservations. No separate physical-table registry is created.
 
-**Decision needed:**
-1. **Table registry:** extend `restaurant_tables` with nullable reservation columns (recommended — one physical table stays one record, avoiding two conflicting identities), or create a separate `reservation_tables` registry.
-2. **Dine-in interaction (D-5b):** should availability treat a live dine-in order on a table as blocking a reservation for the same window? Recommended: **no** in Stage 5 (reservations consider reservation allocations, closures and service periods only), with the extension point documented. Including live orders changes availability results and would need the owner's confirmation of the operational rule.
-3. Whether table `table_number` uniqueness should become per-venue if venues are introduced (recommended: keep global uniqueness in Stage 5 to avoid changing existing QR behaviour).
+**Implementation:** additive nullable/defaulted columns only (`venue_id`, `table_type`, `operational_status`, `reservation_eligible`, `seating_configuration`, `admin_notes`). Existing identifiers, `table_number` global uniqueness, `capacity`, `is_active`, QR codes and order relationships are unchanged. Reservation allocations reference `restaurant_tables` rows directly.
+
+## D-5B — Active dine-in order occupancy
+
+**Status:** APPROVED — 28 November 2026 (project-owner instruction authorising Stages 5.1 and 5.2).
+
+**Decision:** An active dine-in order blocks reservation allocation of its physical table for an overlapping occupancy period, until the order reaches a completed or cancelled state. An estimated dining duration must never end occupancy.
+
+**Implementation (foundation only):** authoritative active statuses are recorded as `Order::ACTIVE_STATUSES` (`pending`, `confirmed`, `preparing`, `ready`, `out_for_delivery`, `delivered`); terminal statuses are `Order::TERMINAL_STATUSES` (`completed`, `cancelled`). `RestaurantTable::hasActiveDineInOrder()` exposes the read-only occupancy signal. Stage 5.1/5.2 additionally refuse to take a table out of reservation service while it holds an active dine-in order. The blocking/allocation enforcement itself belongs to the Stage 5.3 availability engine, which must apply it inside a transaction with row locking.
+
+**Superseded:** the earlier open questions in this register (separate registry vs extension; whether live orders block availability; per-venue table-number uniqueness). The owner resolved the first two by approving D-5A/D-5B. Table `table_number` remains globally unique in Stages 5.1/5.2 to avoid changing existing QR behaviour.
 
 ---
 

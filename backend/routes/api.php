@@ -15,6 +15,9 @@ use App\Http\Controllers\Api\V1\Admin\MenuOverviewController;
 use App\Http\Controllers\Api\V1\Admin\MenuPriceController;
 use App\Http\Controllers\Api\V1\Admin\RestaurantSettingController;
 use App\Http\Controllers\Api\V1\Admin\ReverbController;
+use App\Http\Controllers\Api\V1\Admin\TableUnavailabilityController;
+use App\Http\Controllers\Api\V1\Admin\VenueController;
+use App\Http\Controllers\Api\V1\Admin\VenueScheduleController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AccountVerificationController;
 use App\Http\Controllers\Api\V1\PasswordRecoveryController;
@@ -307,6 +310,34 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:tables.qr.revoke,tables.manage');
         Route::delete('/admin/tables/qr/{id}', [AdminTableQrController::class, 'destroy'])
             ->middleware('permission:tables.qr.revoke,tables.manage');
+
+        // Stage 5.2: Venue, table and capacity configuration.
+        Route::get('/admin/venues', [VenueController::class, 'index'])
+            ->middleware('permission:venues.view,venues.create,venues.update');
+        Route::post('/admin/venues', [VenueController::class, 'store'])
+            ->middleware('permission:venues.create');
+        Route::get('/admin/venues/{id}', [VenueController::class, 'show'])
+            ->middleware('permission:venues.view,venues.update');
+        Route::put('/admin/venues/{id}', [VenueController::class, 'update'])
+            ->middleware('permission:venues.update');
+        Route::delete('/admin/venues/{id}', [VenueController::class, 'destroy'])
+            ->middleware('permission:venues.delete');
+        Route::put('/admin/venues/{venueId}/operating-hours', [VenueScheduleController::class, 'updateOperatingHours'])
+            ->middleware('permission:venues.configuration.manage');
+        Route::post('/admin/venues/{venueId}/special-hours', [VenueScheduleController::class, 'storeSpecialHour'])
+            ->middleware('permission:venues.configuration.manage');
+        Route::delete('/admin/venues/{venueId}/special-hours/{specialHourId}', [VenueScheduleController::class, 'destroySpecialHour'])
+            ->middleware('permission:venues.configuration.manage');
+        Route::post('/admin/venues/{venueId}/closures', [VenueScheduleController::class, 'storeClosure'])
+            ->middleware('permission:venues.configuration.manage');
+        Route::delete('/admin/venues/{venueId}/closures/{closureId}', [VenueScheduleController::class, 'destroyClosure'])
+            ->middleware('permission:venues.configuration.manage');
+        Route::get('/admin/tables/{tableId}/unavailability', [TableUnavailabilityController::class, 'index'])
+            ->middleware('permission:tables.view,tables.manage,tables.availability.manage');
+        Route::post('/admin/tables/{tableId}/unavailability', [TableUnavailabilityController::class, 'store'])
+            ->middleware('permission:tables.availability.manage,tables.manage');
+        Route::delete('/admin/tables/{tableId}/unavailability/{periodId}', [TableUnavailabilityController::class, 'destroy'])
+            ->middleware('permission:tables.availability.manage,tables.manage');
 
         // Phase 9: Central Administration Dashboard
         Route::get('/admin/dashboard/stats', [AdminDashboardController::class, 'stats'])

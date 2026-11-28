@@ -69,6 +69,25 @@ class Order extends Model
     public const STATUS_CANCELLED = 'cancelled';
 
     /**
+     * D-5B authoritative occupancy statuses. An order occupies its physical
+     * table from placement until it reaches a terminal status; an estimated
+     * dining duration never ends occupancy.
+     */
+    public const TERMINAL_STATUSES = [
+        self::STATUS_COMPLETED,
+        self::STATUS_CANCELLED,
+    ];
+
+    public const ACTIVE_STATUSES = [
+        self::STATUS_PENDING,
+        self::STATUS_CONFIRMED,
+        self::STATUS_PREPARING,
+        self::STATUS_READY,
+        self::STATUS_OUT_FOR_DELIVERY,
+        self::STATUS_DELIVERED,
+    ];
+
+    /**
      * Permitted status transitions per order type.
      */
     public const VALID_TRANSITIONS = [
@@ -198,6 +217,14 @@ class Order extends Model
     public function scopeStatus(Builder $query, string $status): Builder
     {
         return $query->where('status', $status);
+    }
+
+    /**
+     * Scope to orders that still occupy their resources (D-5B).
+     */
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->whereIn('status', self::ACTIVE_STATUSES);
     }
 
     /**

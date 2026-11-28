@@ -89,8 +89,74 @@ export interface RestaurantTable {
   table_number: string;
   capacity: number;
   is_active: boolean;
+  venue_id?: number | null;
+  table_type?: string | null;
+  operational_status?: "available" | "maintenance" | "out_of_service";
+  reservation_eligible?: boolean;
+  seating_configuration?: Record<string, unknown> | null;
+  admin_notes?: string | null;
+  venue?: { id: number; name: string; code: string } | null;
   has_active_qr?: boolean;
   active_qr_code?: TableQrCode | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface VenueOperatingHour {
+  id?: number;
+  venue_id?: number;
+  day_of_week: number;
+  opens_at: string | null;
+  closes_at: string | null;
+  is_closed: boolean;
+}
+
+export interface VenueSpecialHour {
+  id: number;
+  venue_id: number;
+  date: string;
+  opens_at: string | null;
+  closes_at: string | null;
+  is_closed: boolean;
+  reason: string | null;
+}
+
+export interface VenueClosure {
+  id: number;
+  venue_id: number;
+  closure_type: "closure" | "maintenance";
+  starts_at: string;
+  ends_at: string | null;
+  reason: string | null;
+  created_at?: string;
+}
+
+export interface TableUnavailabilityPeriod {
+  id: number;
+  restaurant_table_id: number;
+  starts_at: string;
+  ends_at: string | null;
+  reason: string | null;
+}
+
+export interface Venue {
+  id: number;
+  name: string;
+  code: string;
+  description: string | null;
+  venue_type: string;
+  location: string | null;
+  max_capacity: number | null;
+  operational_status: "active" | "inactive" | "maintenance";
+  reservation_enabled: boolean;
+  exclusive_reservation_enabled: boolean;
+  default_reservation_duration_minutes: number;
+  reservation_slot_minutes: number;
+  internal_notes: string | null;
+  tables_count?: number;
+  operating_hours?: VenueOperatingHour[];
+  special_hours?: VenueSpecialHour[];
+  closures?: VenueClosure[];
   created_at?: string;
   updated_at?: string;
 }

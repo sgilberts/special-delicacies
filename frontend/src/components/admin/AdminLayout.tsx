@@ -24,6 +24,7 @@ import {
   WalletCards,
   MessageCircle,
   FileText,
+  Building2,
 } from "lucide-react";
 import { useAuth } from "@/app/providers/useAuth";
 import ThemeToggle from "@/components/public/ThemeToggle";
@@ -156,6 +157,9 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   if (menuItems.length) sections.push({ heading: "Menu Management", items: menuItems });
 
   const restaurantItems: NavItem[] = [];
+  if (isSuperAdmin || userPermissions.some((permission) => ["venues.view", "venues.create", "venues.update", "venues.configuration.manage"].includes(permission))) {
+    restaurantItems.push({ label: "Venues & Booking", to: "/admin/venues", icon: Building2 });
+  }
   if (isSuperAdmin || userPermissions.some((permission) => ["tables.view", "tables.create", "tables.manage"].includes(permission))) {
     restaurantItems.push({ label: "Tables", to: "/admin/tables", icon: Table2 });
   }

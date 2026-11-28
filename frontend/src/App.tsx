@@ -19,6 +19,7 @@ const AdminMenuOverviewPage = lazy(() => import("@/pages/admin/AdminMenuOverview
 const AdminCategoriesPage = lazy(() => import("@/pages/admin/AdminCategoriesPage"));
 const AdminMenuItemsPage = lazy(() => import("@/pages/admin/AdminMenuItemsPage"));
 const AdminTablesPage = lazy(() => import("@/pages/admin/AdminTablesPage"));
+const AdminVenuesPage = lazy(() => import("@/pages/admin/AdminVenuesPage"));
 const AdminQrCodesPage = lazy(() => import("@/pages/admin/AdminQrCodesPage"));
 const WaiterDashboard = lazy(() => import("@/pages/admin/WaiterDashboard"));
 const KitchenDashboard = lazy(() => import("@/pages/admin/KitchenDashboard"));
@@ -109,6 +110,7 @@ function App() {
         <Route path="menu-overview" element={<AdminMenuOverviewPage />} />
         <Route path="categories" element={<AdminCategoriesPage />} />
         <Route path="items" element={<AdminMenuItemsPage />} />
+        <Route path="venues" element={<AdminVenuesPage />} />
         <Route path="tables" element={<AdminTablesPage />} />
         <Route path="qr-codes" element={<AdminQrCodesPage />} />
 
