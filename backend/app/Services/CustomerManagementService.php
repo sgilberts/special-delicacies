@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\CustomerChanged;
 use App\Models\AdminAuditLog;
 use App\Models\Customer;
 use App\Models\CustomerAuditLog;
@@ -154,7 +155,7 @@ class CustomerManagementService
         $values = $this->normalize(Arr::only($input, self::EDITABLE_FIELDS), null);
 
         try {
-            return DB::transaction(function () use ($values, $actor, $request): Customer {
+            $customer = DB::transaction(function () use ($values, $actor, $request): Customer {
                 $customer = new Customer();
                 $customer->fill($values + [
                     'is_active' => true,
@@ -172,6 +173,10 @@ class CustomerManagementService
         } catch (QueryException) {
             throw ValidationException::withMessages(['email' => ['An account with those contact details already exists.']]);
         }
+
+        $this->broadcast($customer, 'created');
+
+        return $customer;
     }
 
     /**
@@ -214,7 +219,10 @@ class CustomerManagementService
             throw ValidationException::withMessages(['email' => ['An account with those contact details already exists.']]);
         }
 
-        return $customer->refresh();
+        $customer = $customer->refresh();
+        $this->broadcast($customer, 'updated');
+
+        return $customer;
     }
 
     public function archive(Customer $customer, User $actor, Request $request): Customer
@@ -228,7 +236,10 @@ class CustomerManagementService
             $this->record($customer, $actor, 'customer.archived', 'Archived customer record', $request, ['status' => self::STATUS_ACTIVE], ['status' => self::STATUS_ARCHIVED]);
         });
 
-        return $customer->refresh();
+        $customer = $customer->refresh();
+        $this->broadcast($customer, 'archived');
+
+        return $customer;
     }
 
     public function restore(Customer $customer, User $actor, Request $request): Customer
@@ -242,7 +253,10 @@ class CustomerManagementService
             $this->record($customer, $actor, 'customer.restored', 'Restored archived customer', $request, ['status' => self::STATUS_ARCHIVED], ['status' => self::STATUS_ACTIVE]);
         });
 
-        return $customer->refresh();
+        $customer = $customer->refresh();
+        $this->broadcast($customer, 'restored');
+
+        return $customer;
     }
 
     /**
@@ -377,5 +391,15 @@ class CustomerManagementService
         ]);
 
         $this->auditService->log($actor, $action, $description, $customer, $old, $new, $request);
+    }
+
+    /**
+     * Announce a committed customer change on the private `customers` channel.
+     * Only identity and lifecycle status travel — financial figures stay behind
+     * `customers.view_financials` and are refetched by authorised clients.
+     */
+    private function broadcast(Customer $customer, string $action): void
+    {
+        CustomerChanged::dispatch($customer->id, $action, $this->status($customer));
     }
 }

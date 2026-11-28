@@ -24,10 +24,17 @@ import {
   WalletCards,
   MessageCircle,
   Contact,
+  Building2,
   FileText,
   RotateCcw,
   FileMinus,
   Undo2,
+  BarChart3,
+  Receipt,
+  Layers,
+  FileClock,
+  Coins,
+  Scale,
 } from "lucide-react";
 import { useAuth } from "@/app/providers/useAuth";
 import ThemeToggle from "@/components/public/ThemeToggle";
@@ -144,6 +151,44 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   }
   if (financeItems.length > 0) sections.push({ heading: "Finance", items: financeItems });
 
+  // Stage 4D financial reporting. Each entry appears only for its own report
+  // permission; the backend enforces the same permission on the endpoint.
+  const reportItems: NavItem[] = [];
+  if (hasAnyPermission(userPermissions, ["financials.reports.dashboard.view"], user?.roles)) {
+    reportItems.push({ label: "Financial Dashboard", to: "/admin/financials/dashboard", icon: BarChart3 });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.receipts.view"], user?.roles)) {
+    reportItems.push({ label: "Receipt Register", to: "/admin/financials/reports/receipts", icon: Receipt });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.allocations.view"], user?.roles)) {
+    reportItems.push({ label: "Allocation Report", to: "/admin/financials/reports/allocations", icon: Layers });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.unallocated.view"], user?.roles)) {
+    reportItems.push({ label: "Unallocated Receipts", to: "/admin/financials/reports/unallocated", icon: WalletCards });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.receivables.view"], user?.roles)) {
+    reportItems.push({ label: "Accounts Receivable", to: "/admin/financials/reports/receivables", icon: FileClock });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.customer_credit.view"], user?.roles)) {
+    reportItems.push({ label: "Customer Credit", to: "/admin/financials/reports/customer-credit", icon: Coins });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.organisation_credit.view"], user?.roles)) {
+    reportItems.push({ label: "Organisation Credit", to: "/admin/financials/reports/organisation-credit", icon: Building2 });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.refunds.view"], user?.roles)) {
+    reportItems.push({ label: "Refund Reports", to: "/admin/financials/reports/refunds", icon: RotateCcw });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.credit_notes.view"], user?.roles)) {
+    reportItems.push({ label: "Credit Note Reports", to: "/admin/financials/reports/credit-notes", icon: FileMinus });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reports.activity.view"], user?.roles)) {
+    reportItems.push({ label: "Financial Activity", to: "/admin/financials/reports/activity", icon: History });
+  }
+  if (hasAnyPermission(userPermissions, ["financials.reconciliation.view"], user?.roles)) {
+    reportItems.push({ label: "Reconciliation", to: "/admin/financials/reconciliation", icon: Scale });
+  }
+  if (reportItems.length > 0) sections.push({ heading: "Financial Reports", items: reportItems });
+
   if (hasAnyPermission(userPermissions, ["commercial_documents.view", "commercial_documents.manage"], user?.roles)) {
     sections.push({ heading: "Commercial", items: [{ label: "Quotations & Invoices", to: "/admin/commercial-documents", icon: FileText }] });
   }
@@ -160,6 +205,9 @@ function getNavSections(user: AuthUser | null | undefined): NavSection[] {
   }
   if (hasAnyPermission(userPermissions, ["customers.view"], user?.roles)) {
     customerSupportItems.push({ label: "Customers", to: "/admin/customers", icon: Contact });
+  }
+  if (hasAnyPermission(userPermissions, ["organisations.view"], user?.roles)) {
+    customerSupportItems.push({ label: "Organisations", to: "/admin/organisations", icon: Building2 });
   }
   if (customerSupportItems.length > 0) {
     sections.push({ heading: "Customer Support", items: customerSupportItems });

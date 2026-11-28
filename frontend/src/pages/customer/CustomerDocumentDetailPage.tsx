@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import customerApi from "@/lib/customerApi";
 import { useRestaurantContent } from "@/hooks/useRestaurantContent";
 import { assetUrl } from "@/lib/assetUrl";
+import { verificationGate } from "@/lib/verificationGate";
+import { httpStatusOf } from "@/lib/sectionLoad";
 
 type Line = { id: number; description: string; detail: string | null; unit_of_measure: string; quantity: string; unit_price: string; discount_amount: string; line_subtotal: string; tax_amount: string; line_total: string };
 type Document = { id: number; document_number: string; document_type: "quotation" | "invoice"; status: string; issue_date: string | null; expiry_date: string | null; currency: string; subtotal: string; discount_amount: string; tax_amount: string; total: string; discount_description: string | null; notes: string | null; terms: string | null; void_reason: string | null; customer: { name: string; email: string | null; phone: string } | null; organisation: { name: string; reference: string } | null; lines: Line[]; payment_summary?: { invoice_total: string; allocated_amount: string; outstanding_balance: string; payment_state: "unpaid" | "partially_paid" | "fully_paid"; payments: { amount: string; currency: string; transaction_reference: string | null; allocated_at: string; reversal: { reason: string; reversed_at: string } | null }[] } };
@@ -19,13 +21,22 @@ export default function CustomerDocumentDetailPage() {
   const [busy, setBusy] = useState(false);
 
   async function load() {
+    setError("");
     try {
       const [docResponse, historyResponse] = await Promise.all([
         customerApi.get<{ data: Document }>(`/customer/${resource}/${documentId}`),
         customerApi.get<{ data: History[] }>(`/customer/${resource}/${documentId}/history`),
       ]);
       setDocument(docResponse.data.data); setHistory(historyResponse.data.data);
-    } catch { setError("This document is unavailable for your account."); }
+    } catch (cause) {
+      if (verificationGate(cause)) {
+        setError("Verify both your email address and telephone number to view this document. Go to your account to complete verification.");
+      } else if (httpStatusOf(cause) === 401) {
+        setError("Your session has expired. Sign in again to view this document.");
+      } else {
+        setError("This document is unavailable for your account.");
+      }
+    }
   }
   useEffect(() => { void load(); }, [documentId, resource]);
 
@@ -36,7 +47,7 @@ export default function CustomerDocumentDetailPage() {
     finally { setBusy(false); }
   }
 
-  if (!document) return <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6"><Link to="/account/documents" className="text-sm font-semibold text-[var(--color-accent)]">← Documents</Link>{error && <p role="alert" className="mt-4 rounded-xl bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger)]">{error}</p>}</main>;
+  if (!document) return <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6"><Link to="/account/documents" className="text-sm font-semibold text-[var(--color-accent)]">← Documents</Link>{error ? <div role="alert" className="mt-4 rounded-xl bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger)]"><p>{error}</p><button type="button" onClick={() => void load()} className="mt-2 min-h-9 font-semibold underline">Try again</button></div> : <p role="status" className="mt-4 text-sm text-[var(--color-text-secondary)]">Loading document…</p>}</main>;
 
   return <main className="mx-auto max-w-4xl space-y-5 px-4 py-8 sm:px-6">
     <style>{`@media print { body { background: #fff !important; color: #111 !important; } .commercial-document-print, .commercial-document-print * { color: #111 !important; background-color: #fff !important; border-color: #ddd !important; box-shadow: none !important; } }`}</style>

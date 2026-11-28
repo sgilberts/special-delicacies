@@ -279,6 +279,16 @@ class RoleAndPermissionSeeder extends Seeder
             ['name' => 'Archive Customers', 'slug' => 'customers.archive', 'description' => 'Archive a customer while preserving financial and audit history'],
             ['name' => 'Restore Customers', 'slug' => 'customers.restore', 'description' => 'Restore an archived customer to active status'],
             ['name' => 'View Customer Financials', 'slug' => 'customers.view_financials', 'description' => 'View a customer\'s payments, deposits, invoices, refunds and credit balance'],
+
+            // Organisation support. Granted explicitly per role in Roles &
+            // Permissions; never handed to every administrator.
+            ['name' => 'View Organisations', 'slug' => 'organisations.view', 'description' => 'View organisation records, memberships and profiles'],
+            ['name' => 'Create Organisations', 'slug' => 'organisations.create', 'description' => 'Create organisation records from the admin portal'],
+            ['name' => 'Update Organisations', 'slug' => 'organisations.update', 'description' => 'Edit organisation profile and contact details'],
+            ['name' => 'Archive Organisations', 'slug' => 'organisations.archive', 'description' => 'Archive an organisation while preserving members, documents and history'],
+            ['name' => 'Restore Organisations', 'slug' => 'organisations.restore', 'description' => 'Restore an archived organisation to active status'],
+            ['name' => 'Manage Organisation Members', 'slug' => 'organisations.manage_members', 'description' => 'View organisation membership lists and membership status'],
+            ['name' => 'View Organisation Financials', 'slug' => 'organisations.view_financials', 'description' => 'View an organisation\'s payments, deposits, invoices, refunds and credit balance'],
         ];
 
         $permissionModels = [];
@@ -310,6 +320,7 @@ class RoleAndPermissionSeeder extends Seeder
                     fn ($slug) => ! str_starts_with($slug, 'financials.')
                         && ! str_starts_with($slug, 'chat.')
                         && ! str_starts_with($slug, 'customers.')
+                        && ! str_starts_with($slug, 'organisations.')
                         && $slug !== 'reverb.monitor'
                 )),
             ],

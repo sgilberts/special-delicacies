@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Admin\AdminAuditLogController;
 use App\Http\Controllers\Api\V1\Admin\AdminCustomerController;
 use App\Http\Controllers\Api\V1\Admin\AdminDashboardController;
 use App\Http\Controllers\Api\V1\Admin\AdminOrderController;
+use App\Http\Controllers\Api\V1\Admin\AdminOrganisationController;
 use App\Http\Controllers\Api\V1\Admin\AdminRolePermissionController;
 use App\Http\Controllers\Api\V1\Admin\AdminStaffController;
 use App\Http\Controllers\Api\V1\Admin\AdminTableQrController;
@@ -40,6 +41,8 @@ use App\Http\Controllers\Api\V1\Admin\CommercialDocumentController;
 use App\Http\Controllers\Api\V1\Admin\RefundController;
 use App\Http\Controllers\Api\V1\Admin\CreditNoteController;
 use App\Http\Controllers\Api\V1\Admin\CreditReversalController;
+use App\Http\Controllers\Api\V1\Admin\FinancialReportsController;
+use App\Http\Controllers\Api\V1\Admin\FinancialReconciliationController;
 use App\Http\Controllers\Api\V1\Admin\ChatAdminController;
 use App\Http\Controllers\Api\V1\PublicContentController;
 use App\Http\Controllers\Api\V1\PublicDeliveryZoneController;
@@ -434,6 +437,79 @@ Route::prefix('v1')->group(function () {
                 ->middleware(['permission:financials.credit_reversals.approve', 'throttle:20,1']);
         });
 
+        // Stage 4D: financial reporting (read-only) and reconciliation.
+        // Every export additionally requires the existing financials.reports.export
+        // permission; holding only the export permission never grants report access.
+        Route::prefix('admin/reports')->group(function () {
+            Route::get('/dashboard', [FinancialReportsController::class, 'overview'])
+                ->middleware('permission:financials.reports.dashboard.view');
+
+            Route::get('/receipts', [FinancialReportsController::class, 'receipts'])
+                ->middleware('permission:financials.reports.receipts.view');
+            Route::get('/receipts/export.csv', [FinancialReportsController::class, 'receiptsExport'])
+                ->middleware(['permission:financials.reports.receipts.view', 'permission:financials.reports.export']);
+
+            Route::get('/allocations', [FinancialReportsController::class, 'allocations'])
+                ->middleware('permission:financials.reports.allocations.view');
+            Route::get('/allocations/export.csv', [FinancialReportsController::class, 'allocationsExport'])
+                ->middleware(['permission:financials.reports.allocations.view', 'permission:financials.reports.export']);
+
+            Route::get('/unallocated', [FinancialReportsController::class, 'unallocated'])
+                ->middleware('permission:financials.reports.unallocated.view');
+            Route::get('/unallocated/export.csv', [FinancialReportsController::class, 'unallocatedExport'])
+                ->middleware(['permission:financials.reports.unallocated.view', 'permission:financials.reports.export']);
+
+            Route::get('/receivables', [FinancialReportsController::class, 'receivables'])
+                ->middleware('permission:financials.reports.receivables.view');
+            Route::get('/receivables/export.csv', [FinancialReportsController::class, 'receivablesExport'])
+                ->middleware(['permission:financials.reports.receivables.view', 'permission:financials.reports.export']);
+
+            Route::get('/customer-credit', [FinancialReportsController::class, 'customerCredit'])
+                ->middleware('permission:financials.reports.customer_credit.view');
+            Route::get('/customer-credit/export.csv', [FinancialReportsController::class, 'customerCreditExport'])
+                ->middleware(['permission:financials.reports.customer_credit.view', 'permission:financials.reports.export']);
+            Route::get('/customer-credit/{customer}', [FinancialReportsController::class, 'customerCreditStatement'])
+                ->whereNumber('customer')
+                ->middleware('permission:financials.reports.customer_credit.view');
+
+            Route::get('/organisation-credit', [FinancialReportsController::class, 'organisationCredit'])
+                ->middleware('permission:financials.reports.organisation_credit.view');
+            Route::get('/organisation-credit/export.csv', [FinancialReportsController::class, 'organisationCreditExport'])
+                ->middleware(['permission:financials.reports.organisation_credit.view', 'permission:financials.reports.export']);
+            Route::get('/organisation-credit/{organisation}', [FinancialReportsController::class, 'organisationCreditStatement'])
+                ->whereNumber('organisation')
+                ->middleware('permission:financials.reports.organisation_credit.view');
+
+            Route::get('/refunds', [FinancialReportsController::class, 'refunds'])
+                ->middleware('permission:financials.reports.refunds.view');
+            Route::get('/refunds/export.csv', [FinancialReportsController::class, 'refundsExport'])
+                ->middleware(['permission:financials.reports.refunds.view', 'permission:financials.reports.export']);
+
+            Route::get('/credit-notes', [FinancialReportsController::class, 'creditNotes'])
+                ->middleware('permission:financials.reports.credit_notes.view');
+            Route::get('/credit-notes/export.csv', [FinancialReportsController::class, 'creditNotesExport'])
+                ->middleware(['permission:financials.reports.credit_notes.view', 'permission:financials.reports.export']);
+
+            Route::get('/activity', [FinancialReportsController::class, 'activity'])
+                ->middleware('permission:financials.reports.activity.view');
+            Route::get('/activity/export.csv', [FinancialReportsController::class, 'activityExport'])
+                ->middleware(['permission:financials.reports.activity.view', 'permission:financials.reports.export']);
+        });
+
+        Route::prefix('admin/reconciliation')->group(function () {
+            Route::get('/', [FinancialReconciliationController::class, 'show'])
+                ->middleware('permission:financials.reconciliation.view');
+            Route::get('/settlements', [FinancialReconciliationController::class, 'settlements'])
+                ->middleware('permission:financials.reports.settlements.view');
+            Route::get('/runs', [FinancialReconciliationController::class, 'runs'])
+                ->middleware('permission:financials.reconciliation.view');
+            Route::post('/runs', [FinancialReconciliationController::class, 'prepare'])
+                ->middleware(['permission:financials.reconciliation.manage', 'throttle:20,1']);
+            Route::post('/runs/{run}/review', [FinancialReconciliationController::class, 'review'])
+                ->whereNumber('run')
+                ->middleware(['permission:financials.reconciliation.review', 'throttle:20,1']);
+        });
+
         // Phase 9: Staff & User Management
         Route::prefix('admin/staff')->group(function () {
             Route::get('/', [AdminStaffController::class, 'index'])
@@ -486,6 +562,33 @@ Route::prefix('v1')->group(function () {
                 ->whereNumber('id')->middleware(['permission:customers.archive', 'throttle:20,1']);
             Route::post('/{id}/restore', [AdminCustomerController::class, 'restore'])
                 ->whereNumber('id')->middleware(['permission:customers.restore', 'throttle:20,1']);
+        });
+
+        // Customer Support: administrative organisation management.
+        // Each capability has its own granular permission; financial figures are
+        // additionally gated behind organisations.view_financials.
+        Route::prefix('admin/organisations')->group(function () {
+            Route::get('/contacts', [AdminOrganisationController::class, 'contacts'])
+                ->middleware('permission:organisations.create');
+            Route::get('/', [AdminOrganisationController::class, 'index'])
+                ->middleware('permission:organisations.view');
+            Route::post('/', [AdminOrganisationController::class, 'store'])
+                ->middleware(['permission:organisations.create', 'throttle:30,1']);
+            Route::get('/{id}', [AdminOrganisationController::class, 'show'])
+                ->whereNumber('id')->middleware('permission:organisations.view');
+            Route::put('/{id}', [AdminOrganisationController::class, 'update'])
+                ->whereNumber('id')->middleware(['permission:organisations.update', 'throttle:30,1']);
+            Route::get('/{id}/financials', [AdminOrganisationController::class, 'financials'])
+                ->whereNumber('id')->middleware('permission:organisations.view_financials');
+            Route::get('/{id}/members', [AdminOrganisationController::class, 'members'])
+                ->whereNumber('id')->middleware('permission:organisations.manage_members');
+            Route::patch('/{id}/members/{membership}/status', [AdminOrganisationController::class, 'updateMemberStatus'])
+                ->whereNumber('id')->whereNumber('membership')
+                ->middleware(['permission:organisations.manage_members', 'throttle:30,1']);
+            Route::post('/{id}/archive', [AdminOrganisationController::class, 'archive'])
+                ->whereNumber('id')->middleware(['permission:organisations.archive', 'throttle:20,1']);
+            Route::post('/{id}/restore', [AdminOrganisationController::class, 'restore'])
+                ->whereNumber('id')->middleware(['permission:organisations.restore', 'throttle:20,1']);
         });
 
         // Phase 9: Administrative Order Oversight
