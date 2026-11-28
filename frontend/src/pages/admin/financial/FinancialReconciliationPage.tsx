@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { useAuth } from "@/app/providers/useAuth";
 import { hasAnyPermission } from "@/lib/permissionAccess";
 import { dateTime, daysAgo, money, titleCase, today } from "@/components/financial/format";
+import PaystackSettlementPanel from "@/components/financial/PaystackSettlementPanel";
 
 type Run = {
   id: number;
@@ -27,7 +28,15 @@ type Snapshot = {
   receipts: Record<string, any>;
   invoices: Record<string, any>;
   exceptions: { code: string; label: string; count: number }[];
-  settlements: { available: boolean; tier: string; reason: string; required_data: string[]; decisions_pending: string[] };
+  settlements: {
+    available: boolean;
+    tier: string;
+    provider: string;
+    read_only: boolean;
+    reason: string;
+    required_data: string[];
+    decisions_pending: string[];
+  };
 };
 
 const controlClass = "mt-1 min-h-10 w-full rounded-lg border bg-[var(--color-input-background)] px-2 text-sm";
@@ -133,7 +142,6 @@ export default function FinancialReconciliationPage() {
 
   const receipts = snapshot?.receipts ?? {};
   const invoices = snapshot?.invoices ?? {};
-  const settlements = snapshot?.settlements;
 
   return (
     <div className="space-y-4">
@@ -141,7 +149,7 @@ export default function FinancialReconciliationPage() {
         <p className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">Financial management</p>
         <h1 className="mt-1 text-2xl font-black">Reconciliation</h1>
         <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-          Internal receipt and invoice reconciliation with an auditable run history. Provider settlement reconciliation stays unavailable until a genuine settlement feed exists.
+          Internal receipt and invoice reconciliation with an auditable run history, plus a read-only Paystack settlement comparison. Provider data is retrieved and inspected only — nothing is posted to the ledger and no settlement is marked financially reconciled.
         </p>
       </header>
 
@@ -219,23 +227,7 @@ export default function FinancialReconciliationPage() {
             </ul>
           </section>
 
-          {settlements && (
-            <section className="rounded-2xl border bg-[var(--color-surface)] p-4" style={controlStyle}>
-              <h2 className="text-lg font-bold">Provider settlement reconciliation</h2>
-              {settlements.available ? (
-                <p className="mt-1 text-sm">Settlement data is available.</p>
-              ) : (
-                <>
-                  <p className="mt-1 rounded-lg bg-[var(--color-warning)]/10 p-3 text-sm">
-                    <strong>Not configured.</strong> {settlements.reason}
-                  </p>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">Required data before this can be enabled</p>
-                  <ul className="mt-1 list-disc pl-5 text-sm">{settlements.required_data.map((item) => <li key={item}>{item}</li>)}</ul>
-                  <p className="mt-2 text-xs text-[var(--color-text-secondary)]">Owner decisions pending: {settlements.decisions_pending.join(", ")}. No settlement batch, fee or payout figure is estimated.</p>
-                </>
-              )}
-            </section>
-          )}
+          <PaystackSettlementPanel />
 
           <section className="rounded-2xl border bg-[var(--color-surface)] p-4" style={controlStyle}>
             <h2 className="text-lg font-bold">Reconciliation history</h2>

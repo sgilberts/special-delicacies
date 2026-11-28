@@ -4,6 +4,7 @@ namespace App\Services\Reporting;
 
 use App\Models\User;
 use App\Services\AuditService;
+use App\Services\Paystack\PaystackSettlementClient;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -13,9 +14,10 @@ use Illuminate\Support\Str;
 /**
  * Internal reconciliation and auditable reconciliation history.
  *
- * Settlement reconciliation is deliberately reported as unavailable: no genuine
- * provider settlement feed exists (decision D4 pending), so no batch, fee or
- * payout figure is ever fabricated.
+ * Provider settlement reconciliation is read-only: when a Paystack settlement
+ * feed is configured, provider batches can be retrieved and previewed, but no
+ * fee, payout or match is posted to the ledger and no settlement is marked
+ * financially reconciled (decisions D5, D12 and D13 pending).
  */
 final class ReconciliationService
 {
@@ -25,6 +27,7 @@ final class ReconciliationService
         private readonly ReceiptLedger $ledger,
         private readonly ReceivableReportService $receivables,
         private readonly AuditService $audit,
+        private readonly PaystackSettlementClient $paystack,
     ) {}
 
     public function snapshot(array $filters, ReportPeriod $period): array
@@ -108,15 +111,21 @@ final class ReconciliationService
 
     public function settlementAvailability(): array
     {
+        $configured = $this->paystack->isConfigured();
+
         return [
-            'available' => false,
-            'tier' => 'not_configured',
-            'reason' => 'No genuine provider settlement feed is configured. Payment verification confirms that a provider captured a payment; it does not report settlement batches, provider fees or bank deposits.',
+            'available' => $configured,
+            'tier' => $configured ? 'provider_read_only' : 'not_configured',
+            'provider' => 'paystack',
+            'read_only' => true,
+            'reason' => $configured
+                ? 'A read-only Paystack settlement feed is configured. Provider settlements can be retrieved and previewed against local receipts; nothing is posted to the ledger and no settlement is marked financially reconciled.'
+                : 'No genuine provider settlement feed is configured. Payment verification confirms that a provider captured a payment; it does not report settlement batches, provider fees or bank deposits.',
             'required_data' => [
                 'settlement batch reference', 'provider', 'currency', 'settlement date',
                 'gross amount', 'provider fees', 'net settlement amount', 'matched transactions',
             ],
-            'decisions_pending' => ['D4', 'D5', 'D12', 'D13'],
+            'decisions_pending' => ['D5', 'D12', 'D13'],
         ];
     }
 

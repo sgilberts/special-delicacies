@@ -46,5 +46,10 @@
         <server name="MAIL_MAILER" value="array" force="true"/>
         <server name="QUEUE_CONNECTION" value="sync" force="true"/>
         <server name="SESSION_DRIVER" value="array" force="true"/>
+        <!-- The Paystack settlement integration is off by default in tests: a real
+             key in a developer's .env must never turn provider retrieval on inside
+             the suite. Tests that need it set services.paystack config explicitly. -->
+        <server name="PAYSTACK_SECRET_KEY" value="" force="true"/>
+        <server name="PAYSTACK_SETTLEMENT_ENABLED" value="false" force="true"/>
     </php>
 </phpunit>

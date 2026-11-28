@@ -43,6 +43,7 @@ use App\Http\Controllers\Api\V1\Admin\CreditNoteController;
 use App\Http\Controllers\Api\V1\Admin\CreditReversalController;
 use App\Http\Controllers\Api\V1\Admin\FinancialReportsController;
 use App\Http\Controllers\Api\V1\Admin\FinancialReconciliationController;
+use App\Http\Controllers\Api\V1\Admin\PaystackSettlementController;
 use App\Http\Controllers\Api\V1\Admin\ChatAdminController;
 use App\Http\Controllers\Api\V1\PublicContentController;
 use App\Http\Controllers\Api\V1\PublicDeliveryZoneController;
@@ -508,6 +509,27 @@ Route::prefix('v1')->group(function () {
             Route::post('/runs/{run}/review', [FinancialReconciliationController::class, 'review'])
                 ->whereNumber('run')
                 ->middleware(['permission:financials.reconciliation.review', 'throttle:20,1']);
+
+            // Stage 4D-PAYSTACK: read-only Paystack settlement retrieval and
+            // preview. Retrieval needs the settlement viewing permission; the
+            // credential-exercising connection test needs reconciliation manage.
+            Route::prefix('paystack')->group(function () {
+                Route::get('/status', [PaystackSettlementController::class, 'status'])
+                    ->middleware('permission:financials.reports.settlements.view');
+                Route::post('/connection-test', [PaystackSettlementController::class, 'testConnection'])
+                    ->middleware(['permission:financials.reconciliation.manage', 'throttle:10,1']);
+                Route::get('/settlements', [PaystackSettlementController::class, 'index'])
+                    ->middleware('permission:financials.reports.settlements.view');
+                Route::get('/settlements/{settlement}', [PaystackSettlementController::class, 'show'])
+                    ->where('settlement', '[0-9]+')
+                    ->middleware('permission:financials.reports.settlements.view');
+                Route::get('/settlements/{settlement}/transactions', [PaystackSettlementController::class, 'transactions'])
+                    ->where('settlement', '[0-9]+')
+                    ->middleware('permission:financials.reports.settlements.view');
+                Route::get('/settlements/{settlement}/preview', [PaystackSettlementController::class, 'preview'])
+                    ->where('settlement', '[0-9]+')
+                    ->middleware(['permission:financials.reports.settlements.view', 'throttle:30,1']);
+            });
         });
 
         // Phase 9: Staff & User Management
