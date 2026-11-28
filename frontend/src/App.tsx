@@ -61,6 +61,9 @@ const AdminCustomerCreditPage = lazy(() => import("@/pages/admin/AdminCustomerCr
 const AdminRefundsPage = lazy(() => import("@/pages/admin/AdminRefundsPage"));
 const AdminCreditNotesPage = lazy(() => import("@/pages/admin/AdminCreditNotesPage"));
 const AdminCreditReversalsPage = lazy(() => import("@/pages/admin/AdminCreditReversalsPage"));
+const FinancialDashboardPage = lazy(() => import("@/pages/admin/financial/FinancialDashboardPage"));
+const FinancialReportPage = lazy(() => import("@/pages/admin/financial/FinancialReportPage"));
+const FinancialReconciliationPage = lazy(() => import("@/pages/admin/financial/FinancialReconciliationPage"));
 const PasswordRecoveryPage = lazy(() => import("@/pages/account/PasswordRecoveryPage"));
 
 function App() {
@@ -149,6 +152,9 @@ function App() {
         <Route path="audit-logs" element={<AdminAuditLogsPage />} />
         <Route path="profile" element={<AdminProfilePage />} />
         <Route path="financials" element={<AdminFinancialsPage />} />
+        <Route path="financials/dashboard" element={<ProtectedRoute requiredPermissions={["financials.reports.dashboard.view"]}><FinancialDashboardPage /></ProtectedRoute>} />
+        <Route path="financials/reports/:report" element={<FinancialReportPage />} />
+        <Route path="financials/reconciliation" element={<ProtectedRoute requiredPermissions={["financials.reconciliation.view"]}><FinancialReconciliationPage /></ProtectedRoute>} />
         <Route path="payment-allocations" element={<ProtectedRoute requiredPermissions={["financials.allocations.view", "financials.allocations.manage"]}><AdminPaymentAllocationsPage /></ProtectedRoute>} />
         <Route path="customer-credit" element={<ProtectedRoute requiredPermissions={["financials.deposits.view", "financials.deposits.manage", "financials.customer_credit.view", "financials.customer_credit.manage"]}><AdminCustomerCreditPage /></ProtectedRoute>} />
         <Route path="commercial-documents" element={<ProtectedRoute requiredPermissions={["commercial_documents.view"]}><AdminCommercialDocumentsPage /></ProtectedRoute>} />
